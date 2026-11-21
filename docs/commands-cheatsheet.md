@@ -46,7 +46,7 @@ gh api repos/pathfindersh/prod-drills-claude/branches/main/protection \
 ./bootstrap.sh down --env kodekloud       # delete LB Services + PVCs, wait, terraform destroy, clean kubeconfig
 ```
 
-`check` and the bad-`--env` error are verified. `down` was verified twice on the earlier design (two manual `state rm`s); the current `up`/`down` are verified at the next `up -> down`.
+`check`, `up --env kodekloud` (10m55s) and `down --env kodekloud` (5m06s) are verified end to end with no manual steps. `status` is not yet verified.
 
 ## aws
 

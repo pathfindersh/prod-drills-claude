@@ -178,7 +178,7 @@ cmd_up() {
   [ "$ans" = yes ] || die "Not applied."
   session_guard block
 
-  step_start "terraform apply (EKS control plane ~10 min, nodes ~3 min, addon ~2 min)"
+  step_start "terraform apply (EKS control plane ~9 min, nodes join ~1 min)"
   tf apply -input=false "$plan"
   step_done "apply"
 

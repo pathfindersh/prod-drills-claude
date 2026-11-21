@@ -120,7 +120,61 @@ terraform -chdir=infra/terraform state list | wc -l                # 31 (same as
 terraform -chdir=infra/terraform plan -var-file=envs/kodekloud.tfvars -var "region=$REGION"
 ```
 
-**Teardown: two `down` runs (verified, but NOT yet clean in one command)**
+**Full cycle, current design: VERIFIED with no manual steps** (fresh account, region
+`us-east-1`, logs `~/phase1-up.log` and `~/phase1-down.log`, not committed)
+
+```bash
+./bootstrap.sh up --env kodekloud
+# shows account / identity / region / env, asks "Type 'yes'" (identity), runs init, validate, plan
+# Plan: 22 to add, 0 to change, 0 to destroy.
+# asks "Apply this plan in account ... ? Type 'yes'"
+# Apply complete! Resources: 22 added, 0 changed, 0 destroyed.
+# 3 nodes Ready (v1.37.1-eks-...), "up finished in 10m55s"
+kubectl get nodes          # 3 x Ready, AL2023, v1.37.1
+./bootstrap.sh down --env kodekloud
+# no LoadBalancer Services / PVCs to delete; "Destroy complete! Resources: 22 destroyed."
+# "leftover check clean (no cluster, instances, unattached volumes, load balancers)"
+# "down complete in 5m6s", then "removed kubeconfig entry arn:aws:eks:...:cluster/demo-eks"
+```
+
+`up --env kodekloud`: 10m55s total (budget 30 min):
+
+| Step | Time |
+|---|---|
+| `terraform init` | 2s |
+| `terraform validate` | 4s |
+| `terraform plan` | 8s |
+| `terraform apply` | 9m15s (555s): EKS control plane 8m40s, node ASG 19s, everything else seconds |
+| `aws eks update-kubeconfig` | 2s |
+| wait for 3 nodes Ready | 49s |
+| (typing `yes` at the apply prompt; the account/region prompt is before the timer starts) | about 35s, derived from the logged totals |
+
+`down --env kodekloud`: 5m06s total:
+
+| Step | Time |
+|---|---|
+| point kubectl at the cluster | 1s |
+| delete LoadBalancer Services / PVCs (none existed) | 2s / 2s |
+| wait for load balancers to disappear | 5s |
+| `terraform init` | 2s |
+| `terraform destroy` (22 resources) | 4m45s (285s): node ASG 1m11s, EKS control plane 3m15s, rest seconds; includes typing `yes` |
+| independent leftover check | 7s |
+
+What the cycle proved:
+
+- `iam_role_policy_attachment` of `service-role/AmazonEBSCSIDriverPolicy` to the node
+  role was **allowed** (created and destroyed cleanly). The custom-policy fallback
+  (`use_custom_elb_ebs_policy`) was not needed.
+- The undeletable-list fallback in `down` was **not needed and did not fire** (no
+  failure, no "left behind" warning). It is verified only offline, not in AWS.
+- No `state rm`, no manual step. The EXIT trap removed the kubeconfig entry after a
+  successful destroy.
+- The new local backend, the 22-resource config and `upgrade_policy = STANDARD`
+  (visible in the applied plan) all worked from a clean state.
+- `terraform destroy`'s confirm prompt displays and accepts input normally while its
+  stderr is copied through `tee`.
+
+**History: the earlier design needed manual steps (two `down` runs)**
 
 Run 1 stopped on a denied `eks:DeleteAddon` (the EBS CSI addon):
 
@@ -140,7 +194,7 @@ terraform -chdir=infra/terraform state rm 'aws_eks_addon.ebs_csi[0]'     # state
 ./bootstrap.sh down --env kodekloud
 # ... destroys everything except eksPolicy, then:
 # Error: deleting IAM Policy (arn:aws:iam::<acct>:policy/eksPolicy): ... api error AccessDenied:
-#   User: arn:aws:iam::<acct>:user/kk_labs_user_683130 is not authorized to perform:
+#   User: arn:aws:iam::<acct>:user/<playground-user> is not authorized to perform:
 #   iam:DeletePolicy ... because no identity-based policy allows the iam:DeletePolicy action
 terraform -chdir=infra/terraform state rm aws_iam_policy.elb_ebs
 terraform -chdir=infra/terraform state list                  # no output: state empty
@@ -173,17 +227,16 @@ Roughly 4 minutes from start to the error (derived from the lines above, not mea
 
 **Not yet verified (honest status):**
 
-- **The new teardown design has never run.** Verified offline only: `terraform validate`,
-  `bash -n`, and unit tests of `destroy_fallback` and `cleanup_kubeconfig` with fake
-  `terraform`/`aws`/`kubectl` binaries. Next session's `up -> kubectl get nodes -> down`
-  must show no manual `state rm`.
-- Whether the playground allows attaching `service-role/AmazonEBSCSIDriverPolicy` to the
-  node role (first real `up` will tell). Fallback: `use_custom_elb_ebs_policy = true`.
-- Whether `Service type=LoadBalancer` works under only `AmazonEKSClusterPolicy` (Phase 2
-  test).
-- `./bootstrap.sh up` end to end and its 30-minute budget. The cluster was built by hand
-  with the legacy `-state` flag; the new-backend `apply` path was never run.
-- The 1h45m session reminder (no session was started with `up`).
+- The 1h45m session reminder: `up` armed it, but no session has run that long, so it
+  has never fired. `./bootstrap.sh status` has not been run.
+- The failure paths of the new `down` in AWS: the undeletable-list fallback and the
+  "keep kubeconfig if the cluster still exists" branch were only unit-tested with fake
+  binaries; the success path was verified.
+- `use_custom_elb_ebs_policy = true` (never planned).
+- `Service type=LoadBalancer` under only `AmazonEKSClusterPolicy`, and PVCs: Phase 2
+  tests (no storage driver exists in Phase 1).
+- The `personal` env (S3 backend) has never been run.
+- Run 1 timings of the earlier design were not captured.
 
 ## 5. Problems hit and fixes
 
@@ -239,8 +292,8 @@ the owning workload and run `down` again — it is idempotent. On the playground
 account is wiped after the session anyway, but a personal account keeps billing
 for an EKS control plane (~$0.10/h) and nodes until destroyed.
 
-**What the two real runs taught us, and the design that followed (implemented, not yet
-verified in AWS).** `eks:DeleteAddon` and `iam:DeletePolicy` are denied in the playground,
+**What the two real runs taught us, and the design that followed (verified in a full
+`up -> down` cycle with no manual steps; see section 4).** `eks:DeleteAddon` and `iam:DeletePolicy` are denied in the playground,
 so both runs needed a manual `terraform state rm`. Everything billable was gone after the
 runs; the orphaned objects were the addon (deleted with the cluster) and the free `eksPolicy`
 IAM policy. The fix removes the cause instead of hiding it:
@@ -340,8 +393,8 @@ may use this cluster, and as what?"
   would exceed the 3-node cap); nodes are replaced manually.
 - **Single local state file** for the playground env.
 - **Cluster support policy:** the first cluster was created with EKS's default `EXTENDED`
-  (seen in the destroy plan); code now sets `STANDARD` (unverified until the next `up`).
-- **Teardown fix is untested in AWS** (section 7) until the next `up -> down`.
+  (seen in the destroy plan); code now sets `STANDARD` (applied and planned in the verified cycle).
+- **Teardown fallbacks are only partly proven:** the happy path is verified in AWS; the failure paths are unit-tested only (section 4).
 
 **Destroy permissions differ from create, so teardown must be tested.** IAM treats
 `Create*` and `Delete*` as separate actions, and restricted accounts often allow one
