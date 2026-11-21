@@ -32,3 +32,11 @@ kubeconfig.*
 .idea/
 .vscode/
 *.swp
+
+# Phase 1: terraform
+!infra/terraform/envs/kodekloud.tfvars
+infra/terraform/.state/
+infra/terraform/backend.tf
+infra/terraform/envs/personal.backend.hcl
+infra/terraform/*.tfplan
+.bootstrap/

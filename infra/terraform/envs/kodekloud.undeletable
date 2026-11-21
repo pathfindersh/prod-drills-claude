@@ -1,0 +1,6 @@
+# Resources the KodeKloud playground lets us create but not delete.
+# Format: terraform-address|why. Used ONLY by `bootstrap.sh down` after a failed destroy
+# (see cmd_down). Only listed addresses are ever `state rm`-ed, and only if they are the
+# sole resources left and the failure was AccessDenied.
+# Not needed with the default managed-policy design; kept for the use_custom_elb_ebs_policy fallback.
+aws_iam_policy.elb_ebs[0]|playground denies iam:DeletePolicy (account wipe removes it)

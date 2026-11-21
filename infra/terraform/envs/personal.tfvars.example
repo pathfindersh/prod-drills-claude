@@ -1,0 +1,6 @@
+# Personal AWS account. Copy to envs/personal.tfvars (git-ignored) and adjust.
+# State lives in S3: also copy envs/personal.backend.hcl.example -> personal.backend.hcl
+# and envs/personal.backend.tf.example is copied to backend.tf by bootstrap.sh.
+kubernetes_version = "1.37"
+instance_type      = "t3.medium"
+node_count         = 3
