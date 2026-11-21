@@ -1,0 +1,28 @@
+# App of Apps root. Applied once by ./bootstrap.sh up (after the helm install of Argo CD).
+# It renders the Helm chart in platform/apps, which emits one child Application per platform
+# component. Lines marked GITOPS_REV are rewritten by bootstrap.sh when GITOPS_REVISION is set
+# (to test a feature branch before merge); the committed default is main.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/pathfindersh/prod-drills-claude.git
+    targetRevision: main # GITOPS_REV
+    path: platform/apps
+    helm:
+      parameters:
+        - name: revision
+          value: main # GITOPS_REV
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

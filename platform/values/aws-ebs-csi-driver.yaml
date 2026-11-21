@@ -1,0 +1,12 @@
+# Credentials come from the node role (AmazonEBSCSIDriverPolicy) via IMDS (hop limit 2),
+# so no IRSA / service-account annotation is needed in this lab.
+controller:
+  replicaCount: 1                # default 2; one is enough for a lab and saves memory
+  resources:
+    requests: { cpu: 10m, memory: 40Mi }
+    limits: { memory: 256Mi }
+node:
+  resources:
+    requests: { cpu: 10m, memory: 40Mi }
+    limits: { memory: 128Mi }
+storageClasses: []               # StorageClasses live in platform/storage (gp3 default)

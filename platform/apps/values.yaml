@@ -1,0 +1,7 @@
+repoURL: https://github.com/pathfindersh/prod-drills-claude.git
+revision: main   # overridden by the root Application (helm parameter)
+
+# Pinned upstream chart versions (see docs/third-party.md)
+charts:
+  argocd:     { repo: https://argoproj.github.io/argo-helm,                      chart: argo-cd,                 version: 10.18.2 }
+  ebsCsi:     { repo: https://kubernetes-sigs.github.io/aws-ebs-csi-driver,      chart: aws-ebs-csi-driver,      version: 2.68.1 }
