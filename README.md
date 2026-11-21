@@ -4,7 +4,7 @@ A portable production-practice lab for DevOps/platform engineering. The repo is
 the whole lab: on any machine, clone it and bring everything up with one
 command. Built phase by phase; each phase has a write-up in `docs/phases/`.
 
-Target environment: KodeKloud AWS playground (3h sessions, account wiped, max 3
+Target environment: KodeKloud AWS playground (2h sessions, account wiped, max 3
 EKS nodes, t3.medium or smaller, restricted IAM). Later: a personal AWS account.
 
 > The repo is **public**. Never commit tokens, keys, passwords or kubeconfigs.

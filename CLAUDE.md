@@ -4,7 +4,7 @@
 Portable production-practice lab. Repo = the whole lab: on any machine,
 `git clone` + `./bootstrap.sh up --env <env>` brings everything up.
 Owner: pathfindersh, senior DevOps/platform engineer building production habits.
-Target: KodeKloud AWS playground (3h sessions, account wiped, max 3 EKS nodes,
+Target: KodeKloud AWS playground (2h sessions, account wiped, max 3 EKS nodes,
 t3.medium or smaller, restricted IAM). Later: personal AWS account.
 
 ## Safety (check before every action)
