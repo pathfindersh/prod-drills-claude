@@ -51,7 +51,8 @@ variable "az_suffixes" {
   default     = ["a", "b", "c"]
 }
 
-variable "enable_ebs_csi_addon" {
-  type    = bool
-  default = true
+variable "use_custom_elb_ebs_policy" {
+  type        = bool
+  description = "Fallback: create the custom eksPolicy (policy.yaml). Off by default; the playground cannot delete it."
+  default     = false
 }

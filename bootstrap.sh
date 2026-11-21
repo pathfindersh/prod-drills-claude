@@ -205,9 +205,76 @@ cmd_up() {
 }
 
 # ---------- down ----------
+# Runs on EXIT of `down` (success OR failure). Removes the kubeconfig entries only when
+# the cluster is really gone; if it still exists (e.g. PVCs stuck) we keep them so you
+# can still kubectl in and debug.
+cleanup_kubeconfig() {
+  local rc=$?
+  set +e
+  if aws eks describe-cluster --region "$REGION" --name "$CLUSTER_NAME" >/dev/null 2>&1; then
+    [ "$rc" -ne 0 ] && warn "cluster $CLUSTER_NAME still exists; keeping kubeconfig entry so you can debug"
+    return "$rc"
+  fi
+  local c
+  for c in $(kubectl config get-contexts -o name 2>/dev/null | grep "/$CLUSTER_NAME\$"); do
+    kubectl config delete-context "$c" >/dev/null 2>&1
+    kubectl config delete-cluster "$c" >/dev/null 2>&1
+    kubectl config delete-user "$c" >/dev/null 2>&1
+    info "removed kubeconfig entry $c"
+  done
+  return "$rc"
+}
+
+# After a FAILED destroy: forgive ONLY resources listed in envs/<env>.undeletable (things the
+# playground lets us create but not delete), and only when (1) the failure was AccessDenied
+# and (2) every resource still in state is on that list. Anything else is a real failure.
+# This does not touch IAM or retry the denied call; it just stops tracking the leftovers.
+destroy_fallback() {
+  local log="$1" list="$TF_DIR/envs/$ENV_NAME.undeletable"
+  [ -f "$list" ] || return 1
+  grep -q "AccessDenied" "$log" || return 1
+  local remaining
+  remaining="$(tf state list 2>/dev/null | grep -v '^data\.' | sed '/^$/d' || true)"
+  [ -n "$remaining" ] || return 1
+  local addr why left=""
+  while IFS= read -r addr; do
+    why="$(awk -F'|' -v a="$addr" '$1==a {print $2; exit}' "$list")"
+    if [ -z "$why" ]; then
+      warn "destroy failed and '$addr' is NOT on $list: treating as a real failure"
+      return 1
+    fi
+    left+="    - $addr  ($why)"$'\n'
+  done <<<"$remaining"
+  while IFS= read -r addr; do tf state rm "$addr" >/dev/null; done <<<"$remaining"
+  echo
+  echo "${c_ylw}WARNING: left behind in AWS (state no longer tracks these):${c_off}"
+  printf '%s' "$left"
+  echo "  Why: the playground allows creating them but denies deleting them. They are free and"
+  echo "  are removed when the playground account is wiped. Until then, a second 'up' in the SAME"
+  echo "  account would fail with EntityAlreadyExists for them."
+  echo
+  return 0
+}
+
+# Independent of Terraform state: anything billable still there?
+leftover_check() {
+  local bad=0 out
+  out="$(aws eks list-clusters --region "$REGION" --query "clusters[?@=='$CLUSTER_NAME']" --output text 2>/dev/null || true)"
+  [ -z "$out" ] || { warn "cluster still listed: $out"; bad=1; }
+  out="$(aws ec2 describe-instances --region "$REGION" --filters "Name=tag:kubernetes.io/cluster/$CLUSTER_NAME,Values=owned" "Name=instance-state-name,Values=running,pending" --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
+  [ -z "$out" ] || { warn "instances still running: $out"; bad=1; }
+  out="$(aws ec2 describe-volumes --region "$REGION" --filters Name=status,Values=available --query 'Volumes[].VolumeId' --output text 2>/dev/null || true)"
+  [ -z "$out" ] || { warn "unattached EBS volumes: $out"; bad=1; }
+  out="$(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerName' --output text 2>/dev/null || true)"
+  [ -z "$out" ] || { warn "load balancers: $out"; bad=1; }
+  [ "$bad" = 0 ] && info "leftover check clean (no cluster, instances, unattached volumes, load balancers)"
+  return 0
+}
+
 cmd_down() {
   parse_env "$@"; resolve_region
   confirm_identity "down"
+  trap cleanup_kubeconfig EXIT
   SECONDS=0
   session_guard
 
@@ -255,18 +322,21 @@ cmd_down() {
 
   step_start "terraform init";  tf_init;  step_done "init"
   step_start "terraform destroy"
-  tf destroy -input=false -var-file="envs/$ENV_NAME.tfvars" -var "region=$REGION"
+  local log; log="$(mktemp)"
+  # stderr is copied to $log (terraform prints errors there); the confirm prompt stays on the tty
+  if ! tf destroy -input=false -var-file="envs/$ENV_NAME.tfvars" -var "region=$REGION" 2> >(tee "$log" >&2); then
+    sleep 1   # let tee flush
+    destroy_fallback "$log" || { rm -f "$log"; die "terraform destroy failed (see above)"; }
+  fi
+  rm -f "$log"
   step_done "destroy"
 
-  # drop the now-dead kubeconfig entries
-  local arn_ctx; arn_ctx="$(kubectl config get-contexts -o name 2>/dev/null | grep "/$CLUSTER_NAME\$" || true)"
-  for c in $arn_ctx; do
-    kubectl config delete-context "$c" >/dev/null 2>&1 || true
-    kubectl config delete-cluster "$c" >/dev/null 2>&1 || true
-    kubectl config delete-user "$c" >/dev/null 2>&1 || true
-  done
+  step_start "leftover check (independent of terraform state)"
+  leftover_check
+  step_done "leftover check"
+
   rm -rf "$RUN_DIR"
-  info "down complete in $((SECONDS/60))m$((SECONDS%60))s"
+  info "down complete in $((SECONDS/60))m$((SECONDS%60))s"   # kubeconfig is cleaned by the EXIT trap
 }
 
 # ---------- status ----------

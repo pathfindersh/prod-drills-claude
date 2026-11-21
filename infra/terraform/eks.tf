@@ -3,6 +3,12 @@ resource "aws_eks_cluster" "this" {
   version  = var.kubernetes_version
   role_arn = aws_iam_role.cluster.arn
 
+  # EKS defaults new clusters to EXTENDED support, which bills extra once standard
+  # support ends. STANDARD makes AWS auto-upgrade instead.
+  upgrade_policy {
+    support_type = "STANDARD"
+  }
+
   vpc_config {
     subnet_ids = data.aws_subnets.public.ids
   }
@@ -37,11 +43,6 @@ resource "kubernetes_config_map_v1" "aws_auth" {
   }
 }
 
-# EBS CSI driver (PersistentVolumes). Uses the node role's EBS permissions via IMDS.
-# Needs Ready nodes to become ACTIVE, hence the dependency on the node group + aws-auth.
-resource "aws_eks_addon" "ebs_csi" {
-  count        = var.enable_ebs_csi_addon ? 1 : 0
-  cluster_name = aws_eks_cluster.this.name
-  addon_name   = "aws-ebs-csi-driver"
-  depends_on   = [aws_autoscaling_group.nodes, kubernetes_config_map_v1.aws_auth]
-}
+# No storage driver here on purpose. The EKS addon could be created but not deleted in
+# the playground (eks:DeleteAddon denied), which broke `down`. Phase 2 installs the EBS
+# CSI driver with Helm via Argo CD (wave 0); Helm uninstall needs no AWS IAM.

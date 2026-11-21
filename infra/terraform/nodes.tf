@@ -93,7 +93,7 @@ resource "aws_launch_template" "node" {
     }
   }
 
-  # IMDSv2 required; hop limit 2 so pods (e.g. the EBS CSI controller) can reach it.
+  # IMDSv2 required; hop limit 2 so pods (e.g. the EBS CSI controller in Phase 2) can reach it.
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
