@@ -1,0 +1,5 @@
+# Copied to infra/terraform/backend.tf by `bootstrap.sh up --env personal`.
+# Partial config: bucket/key/region come from envs/personal.backend.hcl.
+terraform {
+  backend "s3" {}
+}

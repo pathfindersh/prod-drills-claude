@@ -1,0 +1,7 @@
+# Copy to envs/personal.backend.hcl (git-ignored). Create the bucket once, by hand,
+# with versioning + encryption + public access blocked, OUTSIDE this Terraform.
+bucket       = "CHANGE-ME-tfstate-<account-id>"
+key          = "prod-drills/eks/terraform.tfstate"
+region       = "CHANGE-ME"   # region of the STATE bucket (not necessarily the cluster's)
+encrypt      = true
+use_lockfile = true          # S3-native lock (terraform >= 1.10): no DynamoDB table needed
