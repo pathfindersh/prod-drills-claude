@@ -8,9 +8,10 @@ cd "$(git rev-parse --show-toplevel)"
 f=$(mktemp -p . fake-secret.XXXXXX.txt)
 trap 'git reset -q -- "$f" 2>/dev/null || true; rm -f "$f"' EXIT
 
-# AWS docs example key id shape (AKIA + 16 chars) and a 40-char secret.
+# Random-looking fake key (AKIA + 16 chars, 40-char secret). Do NOT use AWS's
+# documented "...EXAMPLE" keys: gitleaks allowlists them, so they never trigger.
 printf 'aws_access_key_id = %s%s\naws_secret_access_key = %s\n' \
-  "AKIA" "IOSFODNN7EXAMPLE" "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" > "$f"
+  "AKIA" "QYLPMN5HHHFPZAM2" "h7Kd93LmQx2VbN8sTzR4wYc1PgJf6AeU0oIuXq5Z" > "$f"
 git add "$f"
 
 if git commit -m "test: fake aws key (must be blocked)"; then
