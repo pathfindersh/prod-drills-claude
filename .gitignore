@@ -1,0 +1,34 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
+# tfvars hold real values; only the examples are tracked
+*.tfvars
+*.tfvars.json
+!envs/*.tfvars.example
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# age / sops keys
+*.age
+age.key
+keys.txt
+.sops/
+
+# Kubernetes
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+.kube/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
