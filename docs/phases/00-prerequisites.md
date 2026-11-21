@@ -37,7 +37,7 @@ are created.
 | `scripts/setup-github.sh` | Idempotent `gh api` call: branch protection on `main` (PR required, no force-push/delete) |
 | `docs/phases/` | One write-up per phase |
 | `docs/commands-cheatsheet.md` | Verified commands grouped by tool |
-| GitHub branch protection on `main` | Applied by `setup-github.sh` (run by the owner, see section 6) |
+| GitHub branch protection on `main` | Applied by `setup-github.sh` (run by the owner) |
 
 ## 4. Working commands
 
@@ -64,7 +64,12 @@ pre-commit run --all-files
 # RuleID:      generic-api-key
 # PASS: commit was blocked by gitleaks
 
-# 5. Check which GitHub account and repo you are using
+# 5. Apply branch protection to main (run by the owner, after the first PR is merged)
+./scripts/setup-github.sh
+# Protecting pathfindersh/prod-drills-claude@main...
+# {"approvals":0,"deletions":false,"enforce_admins":false,"force_push":false,"pr_required":true}
+
+# 6. Check which GitHub account and repo you are using
 gh auth status
 # ✓ Logged in to github.com account pathfindersh
 gh api repos/pathfindersh/prod-drills-claude --jq '{default_branch,visibility}'
@@ -89,18 +94,16 @@ pre-commit run --all-files          # Passed
 git status --short                  # empty: the test cleaned up after itself
 ```
 
-After the owner runs `scripts/setup-github.sh`:
-
 ```bash
 gh api repos/pathfindersh/prod-drills-claude/branches/main/protection \
   --jq '{pr_required: (.required_pull_request_reviews != null), force_push: .allow_force_pushes.enabled}'
 # {"pr_required":true,"force_push":false}
-git push origin HEAD:main           # must be rejected while you are not an admin bypass
 ```
 
-Note: `enforce_admins` is `false` so the owner can merge their own PRs. That
-also means an admin can push to `main` directly; the PR-only rule is a guard
-rail for this workflow, not a hard barrier.
+Not tested: a direct push to `main` (CLAUDE.md forbids it). Because
+`enforce_admins` is `false` so the owner can merge their own PRs, an admin can
+likely bypass the PR rule; treat it as a guard rail for this workflow, not a
+hard barrier.
 
 ## 7. Rollback / teardown
 

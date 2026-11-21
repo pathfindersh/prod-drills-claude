@@ -31,5 +31,6 @@ git push origin <sha>:refs/heads/main             # one-time seed of an empty re
 
 ```bash
 gh auth status
+./scripts/setup-github.sh                 # idempotent branch protection on main (needs main to exist)
 gh api repos/pathfindersh/prod-drills-claude --jq '{default_branch,visibility}'
 ```
