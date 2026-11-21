@@ -46,7 +46,7 @@ gh api repos/pathfindersh/prod-drills-claude/branches/main/protection \
 ./bootstrap.sh down --env kodekloud       # delete LB Services + PVCs, wait, terraform destroy, clean kubeconfig
 ```
 
-`check`, the bad-`--env` error and `down` (needing two manual `state rm`s on the playground, see phase 1 doc) are verified. `up` end to end and `status` are not yet.
+`check` and the bad-`--env` error are verified. `down` was verified twice on the earlier design (two manual `state rm`s); the current `up`/`down` are verified at the next `up -> down`.
 
 ## aws
 
@@ -77,7 +77,7 @@ Plan symbols: `+` create, `-` destroy, `~` update in place, `-/+` replace (check
 ```bash
 kubectl config current-context            # must end with cluster/demo-eks
 kubectl get nodes -o wide                 # 3 x Ready
-kubectl get pods -n kube-system           # coredns, kube-proxy, aws-node, ebs-csi-*
+kubectl get pods -n kube-system           # coredns, kube-proxy, aws-node (ebs-csi-* arrives in Phase 2)
 ```
 
 ## leftover checks (after `down`; independent of Terraform state)
@@ -90,11 +90,10 @@ aws ec2 describe-volumes --region $REGION --filters "Name=status,Values=availabl
 aws elbv2 describe-load-balancers --region $REGION --query "LoadBalancers[].LoadBalancerName"                      # []
 ```
 
-## terraform state surgery (playground teardown only; back up first)
+## terraform state surgery (manual; `bootstrap.sh down` now does this itself for listed resources)
 
 ```bash
 cp infra/terraform/.state/$ACCT-$REGION.tfstate ~/tfstate-backup-$(date +%s).json
-terraform -chdir=infra/terraform state rm 'aws_eks_addon.ebs_csi[0]'   # forget (NOT delete) a resource the playground won't let us delete
-terraform -chdir=infra/terraform state rm aws_iam_policy.elb_ebs
+terraform -chdir=infra/terraform state rm 'aws_iam_policy.elb_ebs[0]'   # forget (NOT delete) a resource the playground won't let us delete
 terraform -chdir=infra/terraform state list                              # empty when nothing is tracked
 ```

@@ -72,6 +72,13 @@ kubectl config current-context     # this lab's cluster?
 
 If either is wrong, stop.
 
+## Storage
+
+Phase 1 leaves the cluster **without a storage driver** (PVCs stay `Pending`). The EKS
+addon could be created but not deleted in the KodeKloud playground, so Phase 2 installs
+the EBS CSI driver with Helm via Argo CD (sync wave 0). The node role already carries
+`AmazonEBSCSIDriverPolicy`.
+
 ## Moving to another machine
 
 Everything needed is in the repo; nothing lives only on one laptop.
