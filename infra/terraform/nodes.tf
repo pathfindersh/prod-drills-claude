@@ -29,7 +29,7 @@ resource "aws_vpc_security_group_egress_rule" "node_all" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_from_cp_kubelet" {
-  description                  = "Control plane -> kubelet and pods"
+  description                  = "Control plane to kubelet and pods"
   security_group_id            = aws_security_group.node.id
   referenced_security_group_id = local.cluster_sg
   from_port                    = 1025
@@ -38,7 +38,7 @@ resource "aws_vpc_security_group_ingress_rule" "node_from_cp_kubelet" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_from_cp_443" {
-  description                  = "Control plane -> extension API servers on pods"
+  description                  = "Control plane to extension API servers on pods"
   security_group_id            = aws_security_group.node.id
   referenced_security_group_id = local.cluster_sg
   from_port                    = 443
@@ -47,7 +47,7 @@ resource "aws_vpc_security_group_ingress_rule" "node_from_cp_443" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "cp_from_node_443" {
-  description                  = "Nodes/pods -> API server"
+  description                  = "Nodes/pods to API server"
   security_group_id            = local.cluster_sg
   referenced_security_group_id = aws_security_group.node.id
   from_port                    = 443
@@ -56,7 +56,7 @@ resource "aws_vpc_security_group_ingress_rule" "cp_from_node_443" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "cp_to_node_kubelet" {
-  description                  = "Control plane -> kubelet and pods"
+  description                  = "Control plane to kubelet and pods"
   security_group_id            = local.cluster_sg
   referenced_security_group_id = aws_security_group.node.id
   from_port                    = 1025
@@ -65,7 +65,7 @@ resource "aws_vpc_security_group_egress_rule" "cp_to_node_kubelet" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "cp_to_node_443" {
-  description                  = "Control plane -> extension API servers on pods"
+  description                  = "Control plane to extension API servers on pods"
   security_group_id            = local.cluster_sg
   referenced_security_group_id = aws_security_group.node.id
   from_port                    = 443
