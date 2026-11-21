@@ -31,5 +31,8 @@ git push origin <sha>:refs/heads/main             # one-time seed of an empty re
 
 ```bash
 gh auth status
+./scripts/setup-github.sh                 # idempotent branch protection on main (admins enforced, 0 approvals; needs main to exist)
 gh api repos/pathfindersh/prod-drills-claude --jq '{default_branch,visibility}'
+gh api repos/pathfindersh/prod-drills-claude/branches/main/protection \
+  --jq '{enforce_admins: .enforce_admins.enabled, approvals: .required_pull_request_reviews.required_approving_review_count, pr_required: (.required_pull_request_reviews != null), force_push: .allow_force_pushes.enabled}'
 ```

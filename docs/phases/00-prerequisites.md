@@ -34,10 +34,10 @@ are created.
 | `LICENSE` | MIT |
 | `.pre-commit-config.yaml` | Runs gitleaks (pinned `v8.30.1`) on every commit |
 | `scripts/test-secret-block.sh` | Proves the hook blocks a fake AWS key; cleans up after itself |
-| `scripts/setup-github.sh` | Idempotent `gh api` call: branch protection on `main` (PR required, no force-push/delete) |
+| `scripts/setup-github.sh` | Idempotent `gh api` call: branch protection on `main` (PR required for everyone incl. admins, 0 approvals, no force-push/delete) |
 | `docs/phases/` | One write-up per phase |
 | `docs/commands-cheatsheet.md` | Verified commands grouped by tool |
-| GitHub branch protection on `main` | Applied by `setup-github.sh` (run by the owner, see section 6) |
+| GitHub branch protection on `main` | Applied by `setup-github.sh` (run by the owner) |
 
 ## 4. Working commands
 
@@ -64,7 +64,13 @@ pre-commit run --all-files
 # RuleID:      generic-api-key
 # PASS: commit was blocked by gitleaks
 
-# 5. Check which GitHub account and repo you are using
+# 5. Apply branch protection to main (run by the owner, after the first PR is merged)
+./scripts/setup-github.sh
+# Protecting pathfindersh/prod-drills-claude@main...
+# {"approvals":0,"deletions":false,"enforce_admins":true,"force_push":false,"pr_required":true}
+# (safe to rerun: same output)
+
+# 6. Check which GitHub account and repo you are using
 gh auth status
 # ✓ Logged in to github.com account pathfindersh
 gh api repos/pathfindersh/prod-drills-claude --jq '{default_branch,visibility}'
@@ -89,18 +95,16 @@ pre-commit run --all-files          # Passed
 git status --short                  # empty: the test cleaned up after itself
 ```
 
-After the owner runs `scripts/setup-github.sh`:
-
 ```bash
 gh api repos/pathfindersh/prod-drills-claude/branches/main/protection \
-  --jq '{pr_required: (.required_pull_request_reviews != null), force_push: .allow_force_pushes.enabled}'
-# {"pr_required":true,"force_push":false}
-git push origin HEAD:main           # must be rejected while you are not an admin bypass
+  --jq '{enforce_admins: .enforce_admins.enabled, approvals: .required_pull_request_reviews.required_approving_review_count, pr_required: (.required_pull_request_reviews != null), force_push: .allow_force_pushes.enabled}'
+# {"approvals":0,"enforce_admins":true,"force_push":false,"pr_required":true}
 ```
 
-Note: `enforce_admins` is `false` so the owner can merge their own PRs. That
-also means an admin can push to `main` directly; the PR-only rule is a guard
-rail for this workflow, not a hard barrier.
+`enforce_admins` is `true`, so the PR rule applies to the owner too. Required
+approvals stay at 0, which lets the sole owner merge their own PR (GitHub does
+not let you approve your own PR, so 1 required approval would deadlock). Not
+tested: an actual direct push to `main` (CLAUDE.md forbids it).
 
 ## 7. Rollback / teardown
 
@@ -142,9 +146,9 @@ rail for this workflow, not a hard barrier.
    "pass". Always confirm the test fails when it should.
 4. **Why pin a hook to a tag or commit instead of `main`?** Reproducibility
    and supply-chain safety: updates are reviewed, not pulled silently.
-5. **What does `enforce_admins: false` trade off?** Admins can bypass
-   protection, which is convenient for a solo owner, but it is not a hard
-   control. Teams enable it.
+5. **What does `enforce_admins: true` change?** Admins can no longer bypass
+   the rules, so protection is a real control. With a solo owner, required
+   approvals must stay 0 or the owner cannot merge their own PRs.
 
 ## 10. Break it
 

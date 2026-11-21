@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Idempotent GitHub repo settings: branch protection on main (PR required).
 # PUT on the protection endpoint replaces the whole config, so reruns converge.
+# Admins are enforced too (no direct pushes to main), approvals stay at 0 so the
+# sole owner can still merge their own PRs.
 # Environments (staging/prod) are added in Phase 5.
 # Usage: scripts/setup-github.sh [owner/repo]
 set -euo pipefail
@@ -20,7 +22,7 @@ echo "Protecting ${REPO}@${BRANCH}..."
 gh api -X PUT "repos/${REPO}/branches/${BRANCH}/protection" --input - >/dev/null <<JSON
 {
   "required_status_checks": null,
-  "enforce_admins": false,
+  "enforce_admins": true,
   "required_pull_request_reviews": {
     "required_approving_review_count": 0,
     "dismiss_stale_reviews": true
