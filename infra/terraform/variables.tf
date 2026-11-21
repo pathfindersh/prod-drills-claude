@@ -47,7 +47,7 @@ variable "node_count" {
 
 variable "az_suffixes" {
   type        = list(string)
-  description = "AZ letters to use. us-east-1e does not support EKS, so default is a,b,c."
+  description = "AZ letters to use. Not every AZ supports EKS control planes, so default is a,b,c."
   default     = ["a", "b", "c"]
 }
 

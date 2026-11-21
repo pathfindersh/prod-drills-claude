@@ -1,0 +1,6 @@
+# Copied to infra/terraform/backend.tf by `bootstrap.sh up|down --env kodekloud`.
+# Partial config: the state path (one file per AWS account + region) is passed at
+# init time with -backend-config="path=...", so no account or region is hardcoded.
+terraform {
+  backend "local" {}
+}

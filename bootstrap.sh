@@ -135,24 +135,19 @@ confirm_identity() { # prints account/region and asks for yes
   [ "$ans" = yes ] || die "Not confirmed."
 }
 
-tf() { # terraform in TF_DIR; local-state envs get a per-account state file
-  local sub="$1"; shift
-  local extra=()
-  if [ "$ENV_NAME" = kodekloud ]; then
-    case "$sub" in plan|apply|destroy|output|state|refresh) extra+=("-state=$STATE_DIR/$ACCOUNT-$REGION.tfstate") ;; esac
-  fi
-  terraform -chdir="$TF_DIR" "$sub" ${extra[@]+"${extra[@]}"} "$@"
-}
+tf() { terraform -chdir="$TF_DIR" "$@"; }  # backend (local path or S3) is chosen at init
 
 tf_init() {
   mkdir -p "$STATE_DIR"
+  # Every env copies its backend block into backend.tf (git-ignored) and inits with
+  # -reconfigure, so switching env/account/region never reuses a stale backend.
+  cp "$TF_DIR/envs/$ENV_NAME.backend.tf.example" "$TF_DIR/backend.tf"
   if [ "$ENV_NAME" = personal ]; then
     [ -f "$TF_DIR/envs/personal.backend.hcl" ] || die "Missing envs/personal.backend.hcl (copy the .example)"
-    cp "$TF_DIR/envs/personal.backend.tf.example" "$TF_DIR/backend.tf"
-    terraform -chdir="$TF_DIR" init -input=false -reconfigure -backend-config=envs/personal.backend.hcl
+    tf init -input=false -reconfigure -backend-config=envs/personal.backend.hcl
   else
-    rm -f "$TF_DIR/backend.tf"
-    terraform -chdir="$TF_DIR" init -input=false
+    # one local state file per account+region: a wiped playground never inherits old state
+    tf init -input=false -reconfigure -backend-config="path=$STATE_DIR/$ACCOUNT-$REGION.tfstate"
   fi
 }
 
