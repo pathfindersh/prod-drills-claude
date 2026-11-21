@@ -7,10 +7,13 @@ resource "aws_eks_cluster" "this" {
     subnet_ids = data.aws_subnets.public.ids
   }
 
-  # ConfigMap auth: nodes join through the aws-auth ConfigMap (see below).
-  # New production clusters should use API / access entries instead (see docs).
+  # Nodes join through the aws-auth ConfigMap (see below). API_AND_CONFIG_MAP honours
+  # both aws-auth and access entries. We asked for CONFIG_MAP first, but EKS reported
+  # API_AND_CONFIG_MAP on this 1.37 cluster; the mode can only move forward
+  # (CONFIG_MAP -> API_AND_CONFIG_MAP -> API), never back, so the code follows reality.
+  # New production clusters should use API (access entries only); see docs.
   access_config {
-    authentication_mode                         = "CONFIG_MAP"
+    authentication_mode                         = "API_AND_CONFIG_MAP"
     bootstrap_cluster_creator_admin_permissions = true
   }
 
