@@ -261,6 +261,18 @@ terraform -chdir=infra/terraform plan -var-file=envs/kodekloud.tfvars -var "regi
 ./bootstrap.sh status                                # cluster ACTIVE + nodes
 ```
 
+Recorded output of `./bootstrap.sh status` on a freshly applied cluster (Phase 1 definition of done):
+
+```text
+Account: 905418162863  Region: us-east-1
+Session: 12 min elapsed of 120 (warn at 105)
+Cluster demo-eks: ACTIVE        1.37
+NAME                            STATUS   ROLES    AGE    VERSION
+ip-172-31-1-21.ec2.internal     Ready    <none>   103s   v1.37.1-eks-9adbfea
+ip-172-31-38-87.ec2.internal    Ready    <none>   102s   v1.37.1-eks-9adbfea
+ip-172-31-88-148.ec2.internal   Ready    <none>   102s   v1.37.1-eks-9adbfea
+```
+
 After `down`, nothing billable should remain (commands in section 4):
 no clusters, no running instances, no `available` volumes, no load balancers.
 
