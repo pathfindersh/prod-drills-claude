@@ -114,16 +114,61 @@ terraform -chdir=infra/terraform state list | wc -l                # 31 (same as
 terraform -chdir=infra/terraform plan -var-file=envs/kodekloud.tfvars -var "region=$REGION"
 ```
 
-**Not yet verified in this session (honest status):**
+**Teardown: two `down` runs (verified, but NOT yet clean in one command)**
 
-- The very first `terraform apply` was run by hand with the legacy `-state` flag
-  (it created the 31 resources above). `bootstrap.sh up` and the new-backend
-  `apply` path have not been run end to end.
-- The plan after the `authentication_mode` fix should print `No changes.`; the
-  re-run is pending the owner's confirmation.
-- `./bootstrap.sh down --env kodekloud` is the final YOU RUN of this phase. Record
-  its output and timings here once it has run.
-- `up` timing (budget 30 min) has not been measured through `bootstrap.sh`.
+Run 1 stopped on a denied `eks:DeleteAddon` (the EBS CSI addon). *The exact error text
+and timings of this run were not captured; paste them here.* Recovery, then run 2:
+
+```bash
+REGION=$(aws configure get region); ACCT=$(aws sts get-caller-identity --query Account --output text)
+cp infra/terraform/.state/$ACCT-$REGION.tfstate ~/tfstate-backup-predestroy-$(date +%s).json   # always back up before state surgery
+terraform -chdir=infra/terraform state rm 'aws_eks_addon.ebs_csi[0]'     # state only; AWS untouched
+# Removed aws_eks_addon.ebs_csi[0]
+./bootstrap.sh down --env kodekloud
+# ... destroys everything except eksPolicy, then:
+# Error: deleting IAM Policy (arn:aws:iam::<acct>:policy/eksPolicy): ... api error AccessDenied:
+#   User: arn:aws:iam::<acct>:user/kk_labs_user_683130 is not authorized to perform:
+#   iam:DeletePolicy ... because no identity-based policy allows the iam:DeletePolicy action
+terraform -chdir=infra/terraform state rm aws_iam_policy.elb_ebs
+terraform -chdir=infra/terraform state list                  # no output: state empty
+```
+
+Leftover checks after run 2 (all clean):
+
+```bash
+aws eks list-clusters --region us-east-1                      # {"clusters": []}
+aws ec2 describe-instances --region us-east-1 --filters "Name=instance-state-name,Values=running,pending"   --query "Reservations[].Instances[].InstanceId"             # []
+aws ec2 describe-volumes --region us-east-1 --filters "Name=status,Values=available" --query "Volumes[].VolumeId"   # []
+aws elbv2 describe-load-balancers --region us-east-1 --query "LoadBalancers[].LoadBalancerName"                      # []
+```
+
+Timings, `down` run 2 (from the script's own output, region `us-east-1`):
+
+| Step | Time |
+|---|---|
+| point kubectl at cluster | 1s |
+| delete LoadBalancer Services (none existed) | 2s |
+| delete PVCs (`No resources found`) | 3s |
+| wait for load balancers to disappear | 5s |
+| `terraform init` | 3s (16s elapsed so far) |
+| destroy: Auto Scaling Group (3 nodes) | 1m29s |
+| destroy: EKS control plane | 2m26s |
+| destroy: node role, profile, SG, launch template, cluster role, attachments | seconds each |
+| `iam:DeletePolicy` on `eksPolicy` | AccessDenied: run aborted (no "destroy took" line, no kubeconfig cleanup) |
+
+Roughly 4 minutes from start to the error (derived from the lines above, not measured end to end).
+
+**Not yet verified (honest status):**
+
+- A `down` that finishes with no manual `state rm`. Both runs needed one. This is the
+  open design item (see section 7 and the PR).
+- `./bootstrap.sh up` end to end, and its 30-minute budget. The cluster was built by
+  hand with the legacy `-state` flag; the new-backend `apply` path was never run.
+- The post-fix `terraform plan` ("No changes.") was not confirmed before teardown.
+- The 1h45m session reminder (no session was started with `up`).
+- `eksPolicy` still exists in the account (state no longer tracks it). A second
+  `up` in the *same* account would fail with `EntityAlreadyExists`. The playground wipes
+  the account between sessions, so this only matters within one session.
 
 ## 5. Problems hit and fixes
 
@@ -133,6 +178,8 @@ terraform -chdir=infra/terraform plan -var-file=envs/kodekloud.tfvars -var "regi
 | Plan drift: `authentication_mode = "API_AND_CONFIG_MAP" -> "CONFIG_MAP"` (`Plan: 0 to add, 1 to change`) | The code asked for `CONFIG_MAP`, but EKS reported `API_AND_CONFIG_MAP` on the 1.37 cluster. Auth mode is one-way (`CONFIG_MAP` → `API_AND_CONFIG_MAP` → `API`), so the plan was asking for a downgrade EKS does not offer (not applied; we did not test what the API would answer). | `terraform plan` with `authentication_mode = "CONFIG_MAP"` | `terraform plan` after setting `authentication_mode = "API_AND_CONFIG_MAP"` (code now matches reality; `aws-auth` unchanged) | When reality moves one-way, change the code, not reality. Read the arrow: `old -> new` is "what AWS has -> what your code wants". |
 | `aws: error: argument operation: Invalid choice` for `aws eks describe-cluster-versions` | Installed AWS CLI 2.22.22 predates that subcommand. | `aws eks describe-cluster-versions ...` | `python3 -I -c "import boto3 ... describe_cluster_versions(...)"` (boto3 1.35.49 already had it) | Same API, different client. Upgrade the CLI when convenient; check `aws <svc> help` before trusting a command exists. |
 | `-state` is "a legacy option used for the local backend only" (`terraform plan -help`) | Passing a state file per command is the old interface; the supported way is backend configuration. Also, my first plan command hardcoded `us-east-1` in the state file name. | `terraform plan ... -state=.state/$ACCT-us-east-1.tfstate` | `terraform init -reconfigure -backend-config="path=…/$ACCT-$REGION.tfstate"`, then plain `terraform plan` | Choose the backend once at init, not per command. Derive account and region from variables, never type them. |
+| `eks:DeleteAddon` denied during `down` (run 1; exact text not captured) | The playground allows creating the `aws-ebs-csi-driver` addon but denies deleting it, and Terraform deletes the addon before the cluster. | `./bootstrap.sh down --env kodekloud` | `terraform state rm 'aws_eks_addon.ebs_csi[0]'`, then `./bootstrap.sh down` again (cluster deletion removes the addon) | Create and delete are separate permissions. Do not assume a resource that applies cleanly can be destroyed. `state rm` forgets a resource; it does not delete it. |
+| `AccessDenied ... not authorized to perform: iam:DeletePolicy on resource: policy .../eksPolicy because no identity-based policy allows the iam:DeletePolicy action` (run 2) | Same pattern: the playground allows `CreatePolicy`, denies `DeletePolicy`. Detaching the policy and deleting both roles worked. | `./bootstrap.sh down --env kodekloud` (the `terraform destroy` step) | `terraform state rm aws_iam_policy.elb_ebs`; leftover checks then clean | A custom managed policy cannot be removed here, so it should not be Terraform-managed in this env. Teardown must be tested the same way as setup. |
 
 ## 6. How to verify
 
@@ -145,6 +192,9 @@ terraform -chdir=infra/terraform plan -var-file=envs/kodekloud.tfvars -var "regi
                                                      # "No changes." — no drift
 ./bootstrap.sh status                                # cluster ACTIVE + nodes
 ```
+
+After `down`, nothing billable should remain (commands in section 4):
+no clusters, no running instances, no `available` volumes, no load balancers.
 
 Optional storage check (creates and removes a 1 GiB EBS volume): create a PVC
 using a StorageClass backed by `ebs.csi.aws.com`, attach it to a pod, confirm
@@ -173,6 +223,15 @@ Order, and why:
 the owning workload and run `down` again — it is idempotent. On the playground the
 account is wiped after the session anyway, but a personal account keeps billing
 for an EKS control plane (~$0.10/h) and nodes until destroyed.
+
+**Known problem (not yet fixed): `down` is not one command on the playground.**
+`eks:DeleteAddon` and `iam:DeletePolicy` are denied, so `terraform destroy` stops at
+those resources and each needed a manual `terraform state rm`. Everything billable
+(cluster, instances, volumes, load balancers) was gone after the runs; the orphaned
+objects are the addon (removed with the cluster) and the `eksPolicy` IAM policy
+(free, left in the account until it is wiped). A permanent fix is proposed in PR #3
+and is not implemented yet. Never run `state rm` before confirming with the leftover
+checks that the real resource is gone or free.
 
 ## 8. Concepts
 
@@ -243,6 +302,21 @@ may use this cluster, and as what?"
 - **No instance refresh:** changing the launch template does not roll nodes (it
   would exceed the 3-node cap); nodes are replaced manually.
 - **Single local state file** for the playground env.
+- **Cluster support policy:** the cluster was created with EKS's default
+  `upgrade_policy.support_type = "EXTENDED"` (seen in the destroy plan), which bills
+  extra after standard support ends. Not yet set to `STANDARD` in code.
+- **`down` needs manual `state rm`** for the addon and `eksPolicy` (section 7).
+
+**Destroy permissions differ from create, so teardown must be tested.** IAM treats
+`Create*` and `Delete*` as separate actions, and restricted accounts often allow one
+without the other (here: create addon/policy yes, delete no). *Analogy:* a hotel
+keycard that opens the door to check in but not the door to check out. The setup
+works, everything looks fine, and the problem only appears at the end, when you are
+tired and the clock is running. In production the same trap shows up as CI roles that
+can deploy but not roll back, or `terraform destroy` failing halfway and leaving
+billable resources. So: run `up` then `down` in a fresh account early, check for
+leftovers with independent commands (not Terraform's own state), and design
+resources so their teardown only needs actions you know are allowed.
 
 **Unmanaged node group.** Instead of EKS-managed nodes, we run our own launch
 template + Auto Scaling Group because the playground denies managed node groups.
