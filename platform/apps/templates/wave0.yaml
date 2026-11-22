@@ -3,6 +3,8 @@
 ---
 {{ include "app.chartApp" (dict "root" . "c" .Values.charts.ebsCsi "name" "aws-ebs-csi-driver" "ns" "kube-system" "wave" 0) }}
 ---
+{{ include "app.chartApp" (dict "root" . "c" .Values.charts.metricsServer "name" "metrics-server" "ns" "kube-system" "wave" 0) }}
+---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

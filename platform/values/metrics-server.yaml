@@ -1,0 +1,7 @@
+# EKS ships no metrics-server; needed for `kubectl top` and the Phase 3 HPA.
+# Kubelet serving certs on EKS are signed by the cluster CA with node IPs/names, so no
+# --kubelet-insecure-tls is needed (do not add it).
+replicas: 1
+resources:
+  requests: { cpu: 25m, memory: 48Mi }
+  limits: { memory: 128Mi }
