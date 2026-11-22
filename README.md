@@ -58,8 +58,8 @@ git clone https://github.com/pathfindersh/prod-drills-claude.git
 cd prod-drills-claude
 pre-commit install                 # enable the secret-scanning hook (once per clone)
 ./bootstrap.sh check               # tools + minimum versions
-./bootstrap.sh up --env kodekloud  # confirms account/region, then builds EKS (<= 30 min)
-./bootstrap.sh status              # cluster + nodes + session timer
+./bootstrap.sh up --env kodekloud  # EKS + Argo CD; Argo then syncs platform/ from Git (App of Apps)
+./bootstrap.sh status              # cluster + nodes + Argo app summary + session timer
 ./bootstrap.sh down --env kodekloud  # deletes LBs/PVCs, then terraform destroy
 ```
 
@@ -71,6 +71,15 @@ kubectl config current-context     # this lab's cluster?
 ```
 
 If either is wrong, stop.
+
+### GitOps note
+
+`up` installs Argo CD with Helm, then applies `bootstrap/root.yaml`; everything under `platform/`
+is synced from this repo (a **push to the tracked branch is a deploy**). To test a branch before
+merging: `GITOPS_REVISION=<branch> ./bootstrap.sh up --env kodekloud`. Argo UI:
+`kubectl port-forward svc/argocd-server -n argocd 8080:80`; Grafana:
+`kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80`. Passwords are
+generated at bootstrap and printed once. Details: `docs/phases/02-gitops-monitoring.md`.
 
 ## Storage
 
