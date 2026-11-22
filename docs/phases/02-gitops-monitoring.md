@@ -201,6 +201,10 @@ kubectl get pods -n monitoring            # all Running; Grafana restarts stay p
 - Whole lab: `./bootstrap.sh down --env kodekloud`. It scales the Argo application-controller to 0
   first (otherwise selfHeal recreates what it deletes), removes LoadBalancer Services and PVCs, waits
   for ELBs to vanish, then `terraform destroy` and the leftover check.
+- Verified teardown of the full Phase 2 stack (Argo apps, monitoring, EBS CSI): `./bootstrap.sh down
+  --env kodekloud` -> `Destroy complete! Resources: 22 destroyed.` (destroy 200 s, total 3m49s), then
+  `leftover check clean (no cluster, instances, unattached volumes, load balancers)`, and the kubeconfig
+  entries for the cluster were removed.
 - One component: delete its file under `platform/apps/templates/` and push; `prune: true` removes it.
   (Argo-managed resources reappear if you `kubectl delete` them: that is selfHeal.)
 - Production difference: Prometheus here uses emptyDir, so a pod reschedule loses all history. In
