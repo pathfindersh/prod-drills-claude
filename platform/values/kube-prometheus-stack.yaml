@@ -45,9 +45,13 @@ grafana:
     passwordKey: admin-password
   defaultDashboardsEnabled: false
   persistence: { enabled: false }
+  env:
+    # Grafana pre-installs a set of plugins at startup (needs internet); the container was
+    # OOMKilled (exit 137) at the old 256Mi limit during that. We use none of them.
+    GF_PLUGINS_PREINSTALL_DISABLED: "true"
   resources:
     requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 256Mi }
+    limits: { memory: 384Mi }
   sidecar:
     resources:
       requests: { cpu: 10m, memory: 32Mi }
