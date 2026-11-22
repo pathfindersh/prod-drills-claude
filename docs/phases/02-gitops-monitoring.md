@@ -1,7 +1,9 @@
 # Phase 2 - GitOps & monitoring (Argo CD, Prometheus, Grafana)
 
-> Status: everything below marked "verified" was run in a live KodeKloud session. Items marked
-> **PENDING** were not yet confirmed when this was written (see section 6).
+> Status: all commands below were run in live KodeKloud sessions. Not yet done: a fresh
+> `./bootstrap.sh up` from this branch with the final code (the cluster used for verification was
+> built from an earlier `bootstrap.sh`, and its Grafana Secret was created by hand). That is the
+> first step of the next session, before merging.
 
 ## 1. Goal
 
@@ -155,6 +157,9 @@ curl -s localhost:9090/api/v1/alerts | jq '.data.alerts[] | {alertname: .labels.
 # observed: restarts=1..3 alert=none -> restarts=4 alert=pending (17:52:09) -> alert=firing (17:53:11)
 # {"alertname":"PodRestartingFrequently","pod":"crash-test","state":"firing"}
 kubectl delete pod crash-test
+curl -s localhost:9090/api/v1/rules | jq -r '.data.groups[].rules[] | "\(.name) health=\(.health) state=\(.state)"'
+# High5xxRate health=ok state=inactive / HighP95Latency health=ok state=inactive /
+# PodRestartingFrequently health=ok state=inactive (after the crash pod is deleted)
 ```
 
 ## 5. Problems hit and fixes
@@ -163,7 +168,7 @@ kubectl delete pod crash-test
 |---|---|---|---|---|
 | No revert after a manual change; Argo log `Skipping auto-sync: Synced`; Deployment generation only 1 -> 2 | The `kubectl edit` changed a `replicas` line that was not `spec.replicas`, so the desired state Argo compares never changed (exact edited line not captured) | `kubectl edit deploy ebs-csi-controller -n kube-system` | `kubectl scale deploy ebs-csi-controller -n kube-system --replicas=3` | `kubectl edit` is error-prone for drift demos. Verify with `metadata.generation` / `managedFields` before drawing conclusions about Argo |
 | `helm template` of the EBS CSI chart: `context deadline exceeded` fetching from release-assets.githubusercontent.com | Dev-machine network to GitHub release assets was slow; the chart tarball is hosted there. Not a chart bug | `helm template e aws-ebs-csi-driver/aws-ebs-csi-driver --version 2.68.1 -f ...` | skipped local render; the cluster pulled it fine  via Argo | Local render is a nicety, not a gate; validate in-cluster |
-| Grafana pod `3/3 Running` but `RESTARTS 2`; `lastState.terminated.reason: OOMKilled`, `exitCode: 137`, ran 5 s (11:53:45Z -> 11:53:50Z). `kubectl logs --previous` ended abruptly mid plugin install, no error | Grafana's startup plugin pre-install pushed memory past the 256Mi limit; the kernel OOM killer sent SIGKILL | (deployed as-is with `limits.memory: 256Mi`) | `grafana.env.GF_PLUGINS_PREINSTALL_DISABLED: "true"` and `limits.memory: 384Mi` in `platform/values/kube-prometheus-stack.yaml` (commit ba8d2c8). **PENDING:** result of the fix | A log that stops mid-line with no error means the process was killed from outside: check `lastState` (reason, exit code), not just logs. Size limits for startup peaks, not steady state |
+| Grafana pod `3/3 Running` but `RESTARTS 2`; `lastState.terminated.reason: OOMKilled`, `exitCode: 137`, ran 5 s (11:53:45Z -> 11:53:50Z). `kubectl logs --previous` ended abruptly mid plugin install, no error | Grafana's startup plugin pre-install pushed memory past the 256Mi limit; the kernel OOM killer sent SIGKILL | (deployed as-is with `limits.memory: 256Mi`) | `grafana.env.GF_PLUGINS_PREINSTALL_DISABLED: "true"` and `limits.memory: 384Mi` in `platform/values/kube-prometheus-stack.yaml` (commit ba8d2c8). Verified: app Synced/Healthy, Grafana pod `3/3 Running`, `restartCount=0` and empty `lastState` on all 3 containers | A log that stops mid-line with no error means the process was killed from outside: check `lastState` (reason, exit code), not just logs. Size limits for startup peaks, not steady state |
 | `kubectl get pv` right after deleting the PVC showed the PV `Released`, not gone | The CSI driver deletes the EBS volume asynchronously after the claim is removed (`reclaimPolicy: Delete`) | `kubectl get pv` (immediately) | `sleep 30` then `aws ec2 describe-volumes --volume-ids "$VOL"` -> `InvalidVolume.NotFound` | Trust the AWS-side check, not the instant kubectl view |
 
 ## 6. How to verify
@@ -180,9 +185,14 @@ kubectl get pods -n monitoring            # all Running; Grafana restarts stay p
 - LoadBalancer test (section 4) shows the ELB created, then gone.
 - selfHeal: scale a managed Deployment; it reverts within seconds.
 - Restart alert: crash-test pod makes `PodRestartingFrequently` go pending then firing.
-- **PENDING:** Grafana (port-forward `svc/kube-prometheus-stack-grafana` 3000:80, user `admin`, password
-  from `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`)
-  lists the 3 rules under Alerting -> Alert rules; and Grafana pod restart count stays 0 after the OOM fix.
+- After the OOM fix the Grafana pod stays `3/3 Running` with 0 restarts (verified).
+- Rules are loaded and healthy (verified via the Prometheus API, `/api/v1/rules`):
+  `High5xxRate`, `HighP95Latency`, `PodRestartingFrequently` all `health=ok state=inactive` (idle).
+- Grafana UI (port-forward `svc/kube-prometheus-stack-grafana` 3000:80, user `admin`, password from
+  `kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d`):
+  Alerting -> Alert rules shows "Grafana-managed: no rules". That is expected: our rules are
+  Prometheus (data-source) rules, not Grafana-managed. Optional follow-up: enable `manageAlerts` on
+  the Grafana Prometheus datasource so they also appear in the Grafana UI.
 - Note: `High5xxRate` and `HighP95Latency` have no data until Phase 3 exposes
   `http_requests_total` / `http_request_duration_seconds`; they are loaded but cannot fire yet.
 
