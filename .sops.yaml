@@ -1,0 +1,7 @@
+# SOPS + age scaffold for FUTURE persistent secrets. No real secrets exist yet.
+# Replace the placeholder with your PUBLIC age recipient (age-keygen prints it).
+# The PRIVATE key is never committed: export it as SOPS_AGE_KEY when decrypting.
+creation_rules:
+  - path_regex: secrets/.*\.sops\.ya?ml$
+    encrypted_regex: '^(data|stringData)$'
+    age: age1REPLACE_WITH_YOUR_PUBLIC_RECIPIENT

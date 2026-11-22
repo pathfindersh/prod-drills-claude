@@ -107,3 +107,20 @@ age keys. Recreate or restore them per environment.
 | `infra/terraform/` | EKS + IAM + nodes (adapted from KodeKloud, see `docs/third-party.md`) |
 | `infra/terraform/envs/` | per-env tfvars and backend templates (`kodekloud` local state, `personal` S3) |
 | `.pre-commit-config.yaml` | gitleaks secret scanning |
+
+## Secrets (SOPS + age)
+
+Nothing real is stored yet; this is the scaffold for later.
+
+- Runtime secrets are **generated at bootstrap** where possible: the Grafana admin password is
+  random, lives only in the Kubernetes Secret `monitoring/grafana-admin`, and is printed once by
+  `./bootstrap.sh up`.
+- Persistent secrets (things that must survive a rebuild) will be committed **encrypted** with
+  [SOPS](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age): only the
+  `data`/`stringData` values are encrypted, so diffs stay readable.
+- Key handling: generate once with `age-keygen -o ~/.config/sops/age/keys.txt` (never commit it;
+  `.gitignore` blocks `*.age`, `keys.txt`, `age.key`). Put the **public** recipient (`age1...`) in
+  `.sops.yaml`. Provide the **private** key at use time through the environment:
+  `export SOPS_AGE_KEY="$(cat ~/.config/sops/age/keys.txt)"`.
+- Usage: `sops --encrypt --in-place secrets/foo.sops.yaml` / `sops --decrypt secrets/foo.sops.yaml`.
+- `./bootstrap.sh check` only warns if `sops`/`age` are missing.

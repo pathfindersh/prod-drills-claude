@@ -5,3 +5,4 @@ revision: main   # overridden by the root Application (helm parameter)
 charts:
   argocd:     { repo: https://argoproj.github.io/argo-helm,                      chart: argo-cd,                 version: 10.18.2 }
   ebsCsi:     { repo: https://kubernetes-sigs.github.io/aws-ebs-csi-driver,      chart: aws-ebs-csi-driver,      version: 2.68.1 }
+  kubePrometheusStack: { repo: https://prometheus-community.github.io/helm-charts, chart: kube-prometheus-stack, version: 93.6.1 }
