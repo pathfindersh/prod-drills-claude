@@ -1,0 +1,28 @@
+# ---- Wave 0: Argo manages itself, storage driver, storage classes ----
+{{ include "app.chartApp" (dict "root" . "c" .Values.charts.argocd "name" "argocd" "ns" "argocd" "wave" 0) }}
+---
+{{ include "app.chartApp" (dict "root" . "c" .Values.charts.ebsCsi "name" "aws-ebs-csi-driver" "ns" "kube-system" "wave" 0) }}
+---
+{{ include "app.chartApp" (dict "root" . "c" .Values.charts.metricsServer "name" "metrics-server" "ns" "kube-system" "wave" 0) }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: storage
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.revision }}
+    path: platform/storage
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

@@ -97,3 +97,35 @@ cp infra/terraform/.state/$ACCT-$REGION.tfstate ~/tfstate-backup-$(date +%s).jso
 terraform -chdir=infra/terraform state rm 'aws_iam_policy.elb_ebs[0]'   # forget (NOT delete) a resource the playground won't let us delete
 terraform -chdir=infra/terraform state list                              # empty when nothing is tracked
 ```
+
+## helm / Argo CD (kubectl only; argocd CLI optional)
+
+```bash
+helm repo add argo https://argoproj.github.io/argo-helm && helm search repo argo/argo-cd   # chart + version
+kubectl get applications -n argocd                         # sync/health of every Argo app
+kubectl describe application <name> -n argocd | tail -30   # why an app is stuck
+kubectl port-forward svc/argocd-server -n argocd 8080:80   # Argo UI at http://localhost:8080
+kubectl scale deploy ebs-csi-controller -n kube-system --replicas=3   # selfHeal demo: reverts in ~1s
+GITOPS_REVISION=<branch> ./bootstrap.sh up --env kodekloud            # Argo follows a branch
+```
+
+## storage / load balancers (verified in Phase 2)
+
+```bash
+kubectl get sc                                             # gp3 (default)
+kubectl get pv -o jsonpath='{.items[0].spec.csi.volumeHandle}'   # EBS volume id
+aws ec2 describe-volumes --volume-ids <vol> --query 'Volumes[0].State' --output text   # InvalidVolume.NotFound after delete
+aws elb describe-load-balancers --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text   # classic ELBs (in-tree provider)
+```
+
+## monitoring
+
+```bash
+kubectl top nodes                                          # metrics-server
+kubectl describe nodes | grep -A8 "Allocated resources"    # requests vs allocatable (scheduler view)
+kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090
+curl -s localhost:9090/api/v1/alerts | jq '.data.alerts[] | {alertname: .labels.alertname, state}'
+kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
+kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d   # Grafana admin password
+kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[0].lastState.terminated}'          # OOMKilled? exitCode 137
+```

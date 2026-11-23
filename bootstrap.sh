@@ -4,7 +4,9 @@
 #   ./bootstrap.sh up   --env <kodekloud|personal>
 #   ./bootstrap.sh down --env <kodekloud|personal>
 #   ./bootstrap.sh status [--env <env>]
-# All subcommands are idempotent. Phase 1 implements the terraform part only.
+# All subcommands are idempotent. `up` = terraform + Argo CD (helm) + root App of Apps;
+# Argo then syncs everything under platform/ from Git. Set GITOPS_REVISION=<branch> to make
+# Argo follow a branch other than main (testing before merge).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,6 +47,13 @@ TOOLS=(
   "terraform|1.10|terraform version|brew install terraform|https://developer.hashicorp.com/terraform/install"
   "kubectl|1.30|kubectl version --client|brew install kubectl|https://kubernetes.io/docs/tasks/tools/"
   "jq|1.6|jq --version|brew install jq|sudo apt-get install -y jq"
+  "helm|3.12|helm version --short|brew install helm|https://helm.sh/docs/intro/install/  (curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash)"
+)
+# Optional: only a warning when missing/old. Nothing in up/down/YOU RUN steps needs them.
+OPT_TOOLS=(
+  "argocd|2.10|argocd version --client --short|brew install argocd|https://argo-cd.readthedocs.io/en/stable/cli_installation/"
+  "sops|3.8|sops --version|brew install sops|https://github.com/getsops/sops/releases (download the sops-vX.Y.Z.linux.amd64 binary)"
+  "age|1.1|age --version|brew install age|sudo apt-get install -y age"
 )
 
 extract_ver() { grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1; }
@@ -66,7 +75,18 @@ cmd_check() {
     fi
     if [ "$os" = macos ]; then echo "      install: $brew"; else echo "      install: $other"; fi
   done
-  [ "$bad" = 0 ] && info "All tools OK" || die "Fix the tools above, then re-run: ./bootstrap.sh check"
+  for row in "${OPT_TOOLS[@]}"; do
+    IFS='|' read -r name min vcmd brew other <<<"$row"
+    if ! command -v "$name" >/dev/null 2>&1; then
+      warn "optional tool '$name' missing (need >= $min)"
+    else
+      have="$($vcmd 2>&1 | extract_ver || true)"
+      if [ -n "$have" ] && version_ge "$have" "$min"; then printf '  %-10s ok      %s (optional)\n' "$name" "$have"; continue; fi
+      warn "optional tool '$name' is old: ${have:-?} (want >= $min)"
+    fi
+    if [ "$os" = macos ]; then echo "      install: $brew" >&2; else echo "      install: $other" >&2; fi
+  done
+  [ "$bad" = 0 ] && info "All required tools OK" || die "Fix the tools above, then re-run: ./bootstrap.sh check"
 }
 
 # ---------- session timer ----------
@@ -156,6 +176,85 @@ kube_ctx_ok() { # current context must be this lab's cluster
   [[ "$ctx" == *"/$CLUSTER_NAME" || "$ctx" == "$CLUSTER_NAME" ]]
 }
 
+# ---------- argo cd ----------
+ARGOCD_REPO="https://argoproj.github.io/argo-helm"
+argocd_chart_version() { # single source of truth: platform/apps/values.yaml
+  sed -n 's/^ *argocd: .*version: *\([0-9][0-9.]*\).*/\1/p' "$ROOT/platform/apps/values.yaml"
+}
+
+# JSON of all Applications -> "name sync health" lines
+argo_app_rows() {
+  kubectl get applications -n argocd -o json 2>/dev/null \
+    | jq -r '.items[] | "\(.metadata.name) \(.status.sync.status // "?") \(.status.health.status // "?")"'
+}
+
+# Grafana admin password: random, lives ONLY in a Kubernetes Secret (never in Git).
+# Created before Argo syncs the monitoring app, which references it via grafana.admin.existingSecret.
+GRAFANA_PW_NEW=""
+grafana_secret() {
+  kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  if kubectl -n monitoring get secret grafana-admin >/dev/null 2>&1; then
+    info "secret monitoring/grafana-admin already exists (kept)"; return 0
+  fi
+  GRAFANA_PW_NEW="$(openssl rand -hex 16)"
+  kubectl -n monitoring create secret generic grafana-admin \
+    --from-literal=admin-user=admin --from-literal=admin-password="$GRAFANA_PW_NEW" >/dev/null
+  info "created secret monitoring/grafana-admin"
+}
+
+argo_install() {
+  local ver; ver="$(argocd_chart_version)"; [ -n "$ver" ] || die "cannot read argocd chart version from platform/apps/values.yaml"
+  step_start "helm install Argo CD chart $ver (same values file Argo later uses to manage itself)"
+  helm upgrade --install argocd argo-cd --repo "$ARGOCD_REPO" --version "$ver" \
+    --namespace argocd --create-namespace -f "$ROOT/platform/values/argocd.yaml" --wait --timeout 8m
+  step_done "argocd helm"
+
+  grafana_secret
+
+  step_start "apply bootstrap/root.yaml (App of Apps)"
+  local rev="${GITOPS_REVISION:-}"
+  if [ -n "$rev" ]; then
+    warn "Argo will follow branch '$rev' instead of main (GITOPS_REVISION)"
+    sed "/GITOPS_REV/ s|: main #|: $rev #|" "$ROOT/bootstrap/root.yaml" | kubectl apply -f -
+  else
+    kubectl apply -f "$ROOT/bootstrap/root.yaml"
+  fi
+  step_done "root app"
+}
+
+argo_wait() { # all apps Synced+Healthy, root operation finished
+  local timeout_min="${ARGO_WAIT_MIN:-20}" i rows bad
+  step_start "waiting for all Argo apps Synced+Healthy (timeout ${timeout_min}m)"
+  for i in $(seq 1 $((timeout_min*6))); do
+    rows="$(argo_app_rows || true)"
+    bad="$(awk '$2!="Synced" || $3!="Healthy"' <<<"$rows")"
+    if [ "$(wc -l <<<"$rows")" -gt 1 ] && [ -z "$bad" ] \
+       && [ "$(kubectl get application root -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)" = Succeeded ]; then
+      echo "$rows" | column -t; step_done "argo apps"; return 0
+    fi
+    sleep 10
+  done
+  echo "$rows" | column -t
+  die "Argo apps not all Synced+Healthy after ${timeout_min}m. Inspect: kubectl get applications -n argocd ; kubectl describe application <name> -n argocd"
+}
+
+argo_howto() {
+  local pw; pw="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)"
+  echo
+  info "Argo CD UI:  kubectl port-forward svc/argocd-server -n argocd 8080:80   ->  http://localhost:8080"
+  if [ -n "$pw" ]; then
+    echo "    user: admin   password (generated by Argo, shown once, never stored in Git): $pw"
+  else
+    echo "    admin password secret not found (already deleted?)"
+  fi
+  info "Grafana UI:  kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80  ->  http://localhost:3000"
+  if [ -n "$GRAFANA_PW_NEW" ]; then
+    echo "    user: admin   password (random, shown once, stored only in Secret monitoring/grafana-admin): $GRAFANA_PW_NEW"
+  else
+    echo "    read it again: kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d"
+  fi
+}
+
 # ---------- up ----------
 cmd_up() {
   parse_env "$@"; resolve_region
@@ -196,6 +295,10 @@ cmd_up() {
   done
   kubectl get nodes
   step_done "nodes"
+
+  argo_install
+  argo_wait
+  argo_howto
 
   local total=$((SECONDS/60))
   info "up finished in ${total}m$((SECONDS%60))s"
@@ -290,6 +393,12 @@ cmd_down() {
     # (costing money) - and the ELB's ENIs/security groups would block deleting the VPC
     # objects Terraform does own. Deleting them while the controllers still run lets
     # the cluster clean up after itself.
+    # Argo's selfHeal would recreate anything we delete below, so stop its controller first.
+    step_start "stop Argo CD controller (so selfHeal does not recreate what we delete)"
+    kubectl -n argocd scale statefulset argocd-application-controller --replicas=0 2>/dev/null \
+      && kubectl -n argocd wait --for=delete pod -l app.kubernetes.io/name=argocd-application-controller --timeout=120s 2>/dev/null || true
+    step_done "argo stopped"
+
     step_start "delete LoadBalancer Services"
     kubectl get svc -A -o json \
       | jq -r '.items[] | select(.spec.type=="LoadBalancer") | "\(.metadata.namespace) \(.metadata.name)"' \
@@ -350,7 +459,18 @@ cmd_status() {
   local st; st="$(aws eks describe-cluster --region "$REGION" --name "$CLUSTER_NAME" --query 'cluster.[status,version]' --output text 2>/dev/null || true)"
   if [ -z "$st" ]; then echo "Cluster $CLUSTER_NAME: not found"; return 0; fi
   echo "Cluster $CLUSTER_NAME: $st"
-  if kube_ctx_ok; then kubectl get nodes; else warn "kubectl context is not $CLUSTER_NAME"; fi
+  if kube_ctx_ok; then
+    kubectl get nodes
+    echo
+    if kubectl get applications -n argocd >/dev/null 2>&1; then
+      echo "Argo apps (name sync health):"
+      argo_app_rows | column -t
+      local bad; bad="$(argo_app_rows | awk '$2!="Synced" || $3!="Healthy"' | wc -l)"
+      [ "$bad" = 0 ] && echo "Argo: all apps Synced+Healthy" || warn "$bad app(s) not Synced+Healthy"
+    else
+      echo "Argo: not installed (or no applications yet)"
+    fi
+  else warn "kubectl context is not $CLUSTER_NAME"; fi
 }
 
 usage() { sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }

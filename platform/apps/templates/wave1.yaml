@@ -1,0 +1,3 @@
+# ---- Wave 1: monitoring (after storage + Argo are Healthy) ----
+# ServerSideApply: kube-prometheus-stack CRDs are too large for client-side apply annotations.
+{{ include "app.chartApp" (dict "root" . "c" .Values.charts.kubePrometheusStack "name" "kube-prometheus-stack" "ns" "monitoring" "wave" 1 "extraSync" (list "ServerSideApply=true")) }}

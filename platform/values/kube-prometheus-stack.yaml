@@ -1,0 +1,98 @@
+# Slim kube-prometheus-stack for 3 x t3.medium: Prometheus, Grafana, Alertmanager only
+# (+ operator, kube-state-metrics, node-exporter, which the alerts and dashboards need).
+# Lab data is disposable: NO persistence (emptyDir). In production Prometheus gets a PVC
+# (or remote write) so a pod reschedule does not lose history.
+fullnameOverride: ""
+defaultRules:
+  create: false                 # only our 3 rules (additionalPrometheusRulesMap below)
+# EKS does not expose these control-plane endpoints
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeEtcd: { enabled: false }
+kubeProxy: { enabled: false }
+
+prometheusOperator:
+  admissionWebhooks: { enabled: false }   # no cert-gen hook jobs; fewer moving parts in a lab
+  tls: { enabled: false }
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 192Mi }
+
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    replicas: 1
+    # emptyDir: no storageSpec on purpose
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits: { memory: 1Gi }
+    # pick up rules/monitors from any release label, not only this chart's
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+
+alertmanager:
+  alertmanagerSpec:
+    replicas: 1
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
+grafana:
+  admin:
+    existingSecret: grafana-admin   # created by bootstrap.sh, random, never in Git
+    userKey: admin-user
+    passwordKey: admin-password
+  defaultDashboardsEnabled: false
+  persistence: { enabled: false }
+  env:
+    # Grafana pre-installs a set of plugins at startup (needs internet); the container was
+    # OOMKilled (exit 137) at the old 256Mi limit during that. We use none of them.
+    GF_PLUGINS_PREINSTALL_DISABLED: "true"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+  sidecar:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
+kube-state-metrics:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+
+additionalPrometheusRulesMap:
+  lab-alerts:
+    groups:
+      - name: lab.rules
+        rules:
+          # 5xx + latency have no data until the Phase 3 app exposes http_requests_total /
+          # http_request_duration_seconds. With no series, the expressions return nothing: no alert.
+          - alert: High5xxRate
+            expr: |
+              sum(rate(http_requests_total{status=~"5.."}[5m]))
+                / sum(rate(http_requests_total[5m])) > 0.05
+            for: 5m
+            labels: { severity: critical }
+            annotations:
+              summary: "More than 5% of requests return 5xx"
+          - alert: HighP95Latency
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: "p95 request latency above 500ms"
+          # Works today (kube-state-metrics): proven with a crash-looping test pod.
+          - alert: PodRestartingFrequently
+            expr: increase(kube_pod_container_status_restarts_total[5m]) > 2
+            for: 1m
+            labels: { severity: warning }
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted >2 times in 5m"

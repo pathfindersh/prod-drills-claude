@@ -58,8 +58,8 @@ git clone https://github.com/pathfindersh/prod-drills-claude.git
 cd prod-drills-claude
 pre-commit install                 # enable the secret-scanning hook (once per clone)
 ./bootstrap.sh check               # tools + minimum versions
-./bootstrap.sh up --env kodekloud  # confirms account/region, then builds EKS (<= 30 min)
-./bootstrap.sh status              # cluster + nodes + session timer
+./bootstrap.sh up --env kodekloud  # EKS + Argo CD; Argo then syncs platform/ from Git (App of Apps)
+./bootstrap.sh status              # cluster + nodes + Argo app summary + session timer
 ./bootstrap.sh down --env kodekloud  # deletes LBs/PVCs, then terraform destroy
 ```
 
@@ -71,6 +71,15 @@ kubectl config current-context     # this lab's cluster?
 ```
 
 If either is wrong, stop.
+
+### GitOps note
+
+`up` installs Argo CD with Helm, then applies `bootstrap/root.yaml`; everything under `platform/`
+is synced from this repo (a **push to the tracked branch is a deploy**). To test a branch before
+merging: `GITOPS_REVISION=<branch> ./bootstrap.sh up --env kodekloud`. Argo UI:
+`kubectl port-forward svc/argocd-server -n argocd 8080:80`; Grafana:
+`kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80`. Passwords are
+generated at bootstrap and printed once. Details: `docs/phases/02-gitops-monitoring.md`.
 
 ## Storage
 
@@ -107,3 +116,20 @@ age keys. Recreate or restore them per environment.
 | `infra/terraform/` | EKS + IAM + nodes (adapted from KodeKloud, see `docs/third-party.md`) |
 | `infra/terraform/envs/` | per-env tfvars and backend templates (`kodekloud` local state, `personal` S3) |
 | `.pre-commit-config.yaml` | gitleaks secret scanning |
+
+## Secrets (SOPS + age)
+
+Nothing real is stored yet; this is the scaffold for later.
+
+- Runtime secrets are **generated at bootstrap** where possible: the Grafana admin password is
+  random, lives only in the Kubernetes Secret `monitoring/grafana-admin`, and is printed once by
+  `./bootstrap.sh up`.
+- Persistent secrets (things that must survive a rebuild) will be committed **encrypted** with
+  [SOPS](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age): only the
+  `data`/`stringData` values are encrypted, so diffs stay readable.
+- Key handling: generate once with `age-keygen -o ~/.config/sops/age/keys.txt` (never commit it;
+  `.gitignore` blocks `*.age`, `keys.txt`, `age.key`). Put the **public** recipient (`age1...`) in
+  `.sops.yaml`. Provide the **private** key at use time through the environment:
+  `export SOPS_AGE_KEY="$(cat ~/.config/sops/age/keys.txt)"`.
+- Usage: `sops --encrypt --in-place secrets/foo.sops.yaml` / `sops --decrypt secrets/foo.sops.yaml`.
+- `./bootstrap.sh check` only warns if `sops`/`age` are missing.
