@@ -177,7 +177,9 @@ kube_ctx_ok() { # current context must be this lab's cluster
 }
 
 # ---------- argo cd ----------
-ARGOCD_REPO="https://argoproj.github.io/argo-helm"
+# OCI, not the https chart repo: the https index points tarballs at GitHub release assets,
+# which time out on some networks. ghcr.io is a different host. Same chart, same version.
+ARGOCD_CHART_OCI="oci://ghcr.io/argoproj/argo-helm/argo-cd"
 argocd_chart_version() { # single source of truth: platform/apps/values.yaml
   sed -n 's/^ *argocd: .*version: *\([0-9][0-9.]*\).*/\1/p' "$ROOT/platform/apps/values.yaml"
 }
@@ -204,10 +206,16 @@ grafana_secret() {
 
 argo_install() {
   local ver; ver="$(argocd_chart_version)"; [ -n "$ver" ] || die "cannot read argocd chart version from platform/apps/values.yaml"
-  step_start "helm install Argo CD chart $ver (same values file Argo later uses to manage itself)"
-  helm upgrade --install argocd argo-cd --repo "$ARGOCD_REPO" --version "$ver" \
-    --namespace argocd --create-namespace -f "$ROOT/platform/values/argocd.yaml" --wait --timeout 8m
-  step_done "argocd helm"
+  # Once installed, Argo manages its own Helm release from Git, so re-running the install adds
+  # nothing (and would needlessly depend on the network). Install only the first time.
+  if helm status argocd -n argocd >/dev/null 2>&1; then
+    info "Argo CD release 'argocd' already exists - skipping helm install (Argo self-manages)"
+  else
+    step_start "helm install Argo CD chart $ver from OCI (same values file Argo later uses to manage itself)"
+    helm upgrade --install argocd "$ARGOCD_CHART_OCI" --version "$ver" \
+      --namespace argocd --create-namespace -f "$ROOT/platform/values/argocd.yaml" --wait --timeout 8m
+    step_done "argocd helm"
+  fi
 
   grafana_secret
 
