@@ -1,9 +1,8 @@
 # Phase 2 - GitOps & monitoring (Argo CD, Prometheus, Grafana)
 
-> Status: all commands below were run in live KodeKloud sessions. Not yet done: a fresh
-> `./bootstrap.sh up` from this branch with the final code (the cluster used for verification was
-> built from an earlier `bootstrap.sh`, and its Grafana Secret was created by hand). That is the
-> first step of the next session, before merging.
+> Status: all commands below were run in live KodeKloud sessions, and the final gate passed: a
+> fresh `GITOPS_REVISION=feat/phase-2-gitops ./bootstrap.sh up --env kodekloud` from this branch
+> with the final code succeeded (see "Fresh-up gate" in section 6).
 
 ## 1. Goal
 
@@ -193,6 +192,11 @@ kubectl get pods -n monitoring            # all Running; Grafana restarts stay p
   Alerting -> Alert rules shows "Grafana-managed: no rules". That is expected: our rules are
   Prometheus (data-source) rules, not Grafana-managed. Optional follow-up: enable `manageAlerts` on
   the Grafana Prometheus datasource so they also appear in the Grafana UI.
+- **Fresh-up gate (passed):** on a brand-new cluster, `GITOPS_REVISION=feat/phase-2-gitops
+  ./bootstrap.sh up --env kodekloud` completed in 16m59s with the final code: it printed
+  `created secret monitoring/grafana-admin`, printed the Argo and Grafana UI hints with one-time
+  generated passwords, and ended with all 6 apps Synced/Healthy (`kubectl get applications -n argocd`).
+  The account's Terraform state was empty beforehand, so there was no conflict.
 - Note: `High5xxRate` and `HighP95Latency` have no data until Phase 3 exposes
   `http_requests_total` / `http_request_duration_seconds`; they are loaded but cannot fire yet.
 
