@@ -1,0 +1,22 @@
+# Shared by all environments. image.digest is filled from the mirror-images run summary.
+image:
+  repository: ghcr.io/pathfindersh/loadgenerator
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+containerPort: 8089
+env:
+  FRONTEND_ADDR: frontend:80
+  USERS: 10
+  RATE: 1
+service:
+  enabled: false
+resources:
+  requests:
+    cpu: 300m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+readinessProbe:
+  type: none
+livenessProbe:
+  type: none

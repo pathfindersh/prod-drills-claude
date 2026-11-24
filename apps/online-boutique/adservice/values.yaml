@@ -1,0 +1,26 @@
+# Shared by all environments. image.digest is filled from the mirror-images run summary.
+image:
+  repository: ghcr.io/pathfindersh/adservice
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+containerPort: 9555
+service:
+  port: 9555
+  portName: grpc
+resources:
+  requests:
+    cpu: 200m
+    memory: 180Mi
+  limits:
+    cpu: 300m
+    memory: 300Mi
+readinessProbe:
+  type: grpc
+  initialDelaySeconds: 20
+  periodSeconds: 15
+livenessProbe:
+  type: grpc
+  initialDelaySeconds: 20
+  periodSeconds: 15
+networkPolicy:
+  allowedFrom:
+  - frontend

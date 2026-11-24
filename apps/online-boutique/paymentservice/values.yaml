@@ -1,0 +1,14 @@
+# Shared by all environments. image.digest is filled from the mirror-images run summary.
+image:
+  repository: ghcr.io/pathfindersh/paymentservice
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+containerPort: 50051
+env:
+  PORT: 50051
+  DISABLE_PROFILER: 1
+service:
+  port: 50051
+  portName: grpc
+networkPolicy:
+  allowedFrom:
+  - checkoutservice

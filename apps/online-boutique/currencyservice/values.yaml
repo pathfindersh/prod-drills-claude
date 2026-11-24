@@ -1,0 +1,15 @@
+# Shared by all environments. image.digest is filled from the mirror-images run summary.
+image:
+  repository: ghcr.io/pathfindersh/currencyservice
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+containerPort: 7000
+env:
+  PORT: 7000
+  DISABLE_PROFILER: 1
+service:
+  port: 7000
+  portName: grpc
+networkPolicy:
+  allowedFrom:
+  - frontend
+  - checkoutservice

@@ -1,0 +1,28 @@
+# Shared by all environments. image.digest is filled from the mirror-images run summary.
+image:
+  repository: ghcr.io/pathfindersh/cartservice
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+containerPort: 7070
+env:
+  REDIS_ADDR: redis-cart:6379
+service:
+  port: 7070
+  portName: grpc
+resources:
+  requests:
+    cpu: 200m
+    memory: 64Mi
+  limits:
+    cpu: 300m
+    memory: 128Mi
+readinessProbe:
+  type: grpc
+  initialDelaySeconds: 15
+livenessProbe:
+  type: grpc
+  initialDelaySeconds: 15
+  periodSeconds: 10
+networkPolicy:
+  allowedFrom:
+  - frontend
+  - checkoutservice

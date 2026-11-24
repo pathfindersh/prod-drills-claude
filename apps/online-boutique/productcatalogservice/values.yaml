@@ -1,0 +1,16 @@
+# Shared by all environments. image.digest is filled from the mirror-images run summary.
+image:
+  repository: ghcr.io/pathfindersh/productcatalogservice
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+containerPort: 3550
+env:
+  PORT: 3550
+  DISABLE_PROFILER: 1
+service:
+  port: 3550
+  portName: grpc
+networkPolicy:
+  allowedFrom:
+  - frontend
+  - checkoutservice
+  - recommendationservice
