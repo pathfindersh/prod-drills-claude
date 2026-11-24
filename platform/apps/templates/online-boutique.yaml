@@ -1,0 +1,55 @@
+{{- /* ApplicationSet: one Application per service x environment.
+       Sources: (1) charts/microservice from this repo, (2) this repo as $values for the values files.
+       Argo renders with `helm template` (no Helm release exists in the cluster). */ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: online-boutique
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                {{- range .Values.onlineBoutique.services }}
+                - service: {{ . }}
+                {{- end }}
+          - list:
+              elements:
+                {{- range .Values.onlineBoutique.environments }}
+                - env: {{ . }}
+                {{- end }}
+  template:
+    metadata:
+      name: {{`'{{ .service }}-{{ .env }}'`}}
+      labels:
+        app.kubernetes.io/part-of: online-boutique
+        environment: {{`'{{ .env }}'`}}
+    spec:
+      project: default
+      sources:
+        - repoURL: {{ .Values.repoURL }}
+          targetRevision: {{ .Values.revision }}
+          path: charts/microservice
+          helm:
+            releaseName: {{`'{{ .service }}'`}}
+            valueFiles:
+              - {{`$values/apps/online-boutique/{{ .service }}/values.yaml`}}
+              - {{`$values/apps/online-boutique/{{ .service }}/values-{{ .env }}.yaml`}}
+        - repoURL: {{ .Values.repoURL }}
+          targetRevision: {{ .Values.revision }}
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: {{`shop-{{ .env }}`}}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
