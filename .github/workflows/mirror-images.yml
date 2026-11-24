@@ -1,0 +1,59 @@
+name: mirror-images
+
+# One-off / on-demand: copy the upstream images Online Boutique needs into
+# ghcr.io/<owner>/<name>, byte-for-byte (same manifest digest).
+# Auth is the built-in GITHUB_TOKEN (fine-grained PATs cannot push to GHCR).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  UPSTREAM: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo
+  TAG: v0.10.7
+
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+
+      - name: Copy images (all platforms, digest preserved)
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "## Mirrored images"
+            echo
+            echo "| image | source | digest (source = dest) |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # name|source reference
+          LIST=""
+          for s in adservice cartservice checkoutservice currencyservice \
+                   emailservice frontend loadgenerator paymentservice \
+                   productcatalogservice recommendationservice shippingservice; do
+            LIST+="$s|$UPSTREAM/$s:$TAG"$'\n'
+          done
+          LIST+="redis|docker.io/library/redis:alpine"$'\n'
+          LIST+="busybox|docker.io/library/busybox:1.38.0"$'\n'
+
+          while IFS='|' read -r name src; do
+            [ -z "$name" ] && continue
+            dst="ghcr.io/$OWNER/$name"
+            src_digest=$(skopeo inspect --raw "docker://$src" | sha256sum | cut -d' ' -f1)
+            skopeo copy --all --preserve-digests "docker://$src" "docker://$dst:${src##*:}"
+            dst_digest=$(skopeo inspect --raw "docker://$dst:${src##*:}" | sha256sum | cut -d' ' -f1)
+            if [ "$src_digest" != "$dst_digest" ]; then
+              echo "::error::digest mismatch for $name: $src_digest vs $dst_digest"
+              exit 1
+            fi
+            echo "| $name | \`$src\` | \`sha256:$dst_digest\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "$dst:${src##*:}@sha256:$dst_digest"
+          done <<< "$LIST"
