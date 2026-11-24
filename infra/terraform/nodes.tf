@@ -125,6 +125,10 @@ resource "aws_launch_template" "node" {
         apiServerEndpoint: ${aws_eks_cluster.this.endpoint}
         certificateAuthority: ${aws_eks_cluster.this.certificate_authority[0].data}
         cidr: ${aws_eks_cluster.this.kubernetes_network_config[0].service_ipv4_cidr}
+      kubelet:
+        config:
+          # 110 only works with VPC CNI prefix delegation (terraform_data.cni_prefix below).
+          maxPods: 110
     --BOUNDARY--
   EOT
   )
@@ -148,5 +152,22 @@ resource "aws_autoscaling_group" "nodes" {
   depends_on = [
     aws_vpc_security_group_ingress_rule.node_from_cp_kubelet,
     aws_vpc_security_group_ingress_rule.cp_from_node_443,
+    terraform_data.cni_prefix, # prefix mode first, so nodes never advertise 110 pods without it
   ]
+}
+
+# Order matters: the CNI must be in prefix mode BEFORE any node boots with maxPods=110.
+# The ASG depends on this, so a fresh `up` does: cluster -> CNI patch -> nodes.
+resource "terraform_data" "cni_prefix" {
+  triggers_replace = [aws_eks_cluster.this.endpoint, filesha256("${path.module}/../../scripts/cni-prefix-delegation.sh")]
+
+  provisioner "local-exec" {
+    command = "${path.module}/../../scripts/cni-prefix-delegation.sh"
+    environment = {
+      CLUSTER_NAME = aws_eks_cluster.this.name
+      REGION       = var.region
+    }
+  }
+
+  depends_on = [kubernetes_config_map_v1.aws_auth]
 }

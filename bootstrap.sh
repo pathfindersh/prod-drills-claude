@@ -297,6 +297,10 @@ cmd_up() {
   kube_ctx_ok || die "kubectl context is not $CLUSTER_NAME after update-kubeconfig"
   step_done "kubeconfig"
 
+  step_start "VPC CNI prefix delegation (idempotent; Terraform already did it before the nodes)"
+  CLUSTER_NAME="$CLUSTER_NAME" REGION="$REGION" "$ROOT/scripts/cni-prefix-delegation.sh"
+  step_done "cni prefix"
+
   step_start "waiting for nodes Ready (timeout 10m)"
   local want; want="$(grep -E '^node_count' "$TFVARS" | grep -Eo '[0-9]+' || true)"; want="${want:-3}"
   local i
