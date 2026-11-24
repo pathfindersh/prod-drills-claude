@@ -1,7 +1,7 @@
-# Shared by all environments. image.digest is filled from the mirror-images run summary.
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
 image:
   repository: ghcr.io/pathfindersh/redis
-  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  digest: sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
 containerPort: 6379
 service:
   port: 6379

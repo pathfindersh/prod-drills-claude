@@ -1,7 +1,7 @@
-# Shared by all environments. image.digest is filled from the mirror-images run summary.
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
 image:
   repository: ghcr.io/pathfindersh/loadgenerator
-  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  digest: sha256:f86f07c0da48bc00e7843e060b6811b56b1ad8a184d3962f5e80e15f42370cc8
 containerPort: 8089
 env:
   FRONTEND_ADDR: frontend:80

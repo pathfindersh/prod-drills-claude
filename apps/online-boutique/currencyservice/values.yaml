@@ -1,7 +1,7 @@
-# Shared by all environments. image.digest is filled from the mirror-images run summary.
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
 image:
   repository: ghcr.io/pathfindersh/currencyservice
-  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  digest: sha256:c581681bbf9abec8563e520aac3f3dbe3e7498853b6eb263193bc80c87e42f74
 containerPort: 7000
 env:
   PORT: 7000
