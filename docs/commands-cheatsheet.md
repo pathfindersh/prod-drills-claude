@@ -129,3 +129,21 @@ kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
 kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d   # Grafana admin password
 kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[0].lastState.terminated}'          # OOMKilled? exitCode 137
 ```
+
+## Phase 3 - application (verified 3a)
+```bash
+# helm / kubeconform
+scripts/validate-charts.sh dev                                  # lint + template + kubeconform, every service
+helm template frontend charts/microservice -f apps/online-boutique/frontend/values.yaml -f apps/online-boutique/frontend/values-dev.yaml
+
+# GitHub Actions / GHCR
+gh workflow run mirror-images.yml --ref main
+gh run watch $(gh run list --workflow mirror-images.yml -L1 --json databaseId -q '.[0].databaseId')
+skopeo inspect --raw docker://ghcr.io/pathfindersh/frontend:v0.10.7 | sha256sum   # anonymous digest check
+
+# Argo / cluster
+GITOPS_REVISION=feat/phase-3-application ./bootstrap.sh up --env kodekloud   # deploy a branch (re-point; omit var for main)
+kubectl get applicationset -n argocd; kubectl get applications -n argocd
+kubectl get pods,pvc -n shop-dev
+kubectl -n shop-dev port-forward svc/frontend 8080:80
+```

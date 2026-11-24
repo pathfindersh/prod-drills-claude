@@ -1,0 +1,35 @@
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
+image:
+  repository: ghcr.io/pathfindersh/frontend
+  digest: sha256:e1cbd4561d3c9d27497dc0e8b1c12da194c4bf2ea82648f58bf38f073698f483
+containerPort: 8080
+env:
+  PORT: 8080
+  PRODUCT_CATALOG_SERVICE_ADDR: productcatalogservice:3550
+  CURRENCY_SERVICE_ADDR: currencyservice:7000
+  CART_SERVICE_ADDR: cartservice:7070
+  RECOMMENDATION_SERVICE_ADDR: recommendationservice:8080
+  SHIPPING_SERVICE_ADDR: shippingservice:50051
+  CHECKOUT_SERVICE_ADDR: checkoutservice:5050
+  AD_SERVICE_ADDR: adservice:9555
+  SHOPPING_ASSISTANT_SERVICE_ADDR: shoppingassistantservice:80
+  ENABLE_PROFILER: 0
+service:
+  port: 80
+  portName: http
+readinessProbe:
+  type: httpGet
+  path: /_healthz
+  initialDelaySeconds: 10
+  httpHeaders:
+  - name: Cookie
+    value: shop_session-id=x-readiness-probe
+livenessProbe:
+  type: httpGet
+  path: /_healthz
+  initialDelaySeconds: 10
+  httpHeaders:
+  - name: Cookie
+    value: shop_session-id=x-liveness-probe
+networkPolicy:
+  fromAnywhere: true

@@ -1,0 +1,29 @@
+{{- if .Values.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ms.fullname" . }}
+  labels: {{ include "ms.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector: {{ include "ms.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: {{ .Values.service.portName }}
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort | default .Values.containerPort }}
+{{- if .Values.persistence.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ms.fullname" . }}-headless
+  labels: {{ include "ms.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{ include "ms.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: {{ .Values.service.portName }}
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort | default .Values.containerPort }}
+{{- end }}
+{{- end }}

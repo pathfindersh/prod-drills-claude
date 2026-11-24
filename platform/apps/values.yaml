@@ -7,3 +7,22 @@ charts:
   ebsCsi:     { repo: https://kubernetes-sigs.github.io/aws-ebs-csi-driver,      chart: aws-ebs-csi-driver,      version: 2.68.1 }
   metricsServer: { repo: https://kubernetes-sigs.github.io/metrics-server/,  chart: metrics-server,         version: 3.14.0 }
   kubePrometheusStack: { repo: https://prometheus-community.github.io/helm-charts, chart: kube-prometheus-stack, version: 93.6.1 }
+
+# Online Boutique (service x environment ApplicationSet). Chart: charts/microservice,
+# values: apps/online-boutique/<service>/values{,-<env>}.yaml. Phase 3a enables dev only;
+# add test/prod to `environments` in phase 3b.
+onlineBoutique:
+  environments: [dev]
+  services:
+    - adservice
+    - cartservice
+    - checkoutservice
+    - currencyservice
+    - emailservice
+    - frontend
+    - loadgenerator
+    - paymentservice
+    - productcatalogservice
+    - recommendationservice
+    - redis-cart
+    - shippingservice

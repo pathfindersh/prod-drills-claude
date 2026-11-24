@@ -1,0 +1,20 @@
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
+image:
+  repository: ghcr.io/pathfindersh/emailservice
+  digest: sha256:1142813191b50f7e74bd1d8957d3b272496e9648b745d2c9914752b94356eade
+containerPort: 8080
+env:
+  PORT: 8080
+  DISABLE_PROFILER: 1
+service:
+  port: 5000
+  portName: grpc
+readinessProbe:
+  type: grpc
+  periodSeconds: 5
+livenessProbe:
+  type: grpc
+  periodSeconds: 5
+networkPolicy:
+  allowedFrom:
+  - checkoutservice

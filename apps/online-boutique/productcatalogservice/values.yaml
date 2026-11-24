@@ -1,0 +1,16 @@
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
+image:
+  repository: ghcr.io/pathfindersh/productcatalogservice
+  digest: sha256:ba573405e9b03ea29970185eeaf0a9de9db7400b9104695e39d4dfc0fb651cb5
+containerPort: 3550
+env:
+  PORT: 3550
+  DISABLE_PROFILER: 1
+service:
+  port: 3550
+  portName: grpc
+networkPolicy:
+  allowedFrom:
+  - frontend
+  - checkoutservice
+  - recommendationservice

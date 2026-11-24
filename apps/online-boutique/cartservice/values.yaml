@@ -1,0 +1,28 @@
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
+image:
+  repository: ghcr.io/pathfindersh/cartservice
+  digest: sha256:e5310c2aa45732e351c55c88051700d958dc7ed2693e66405fc6c70cf080109e
+containerPort: 7070
+env:
+  REDIS_ADDR: redis-cart:6379
+service:
+  port: 7070
+  portName: grpc
+resources:
+  requests:
+    cpu: 200m
+    memory: 64Mi
+  limits:
+    cpu: 300m
+    memory: 128Mi
+readinessProbe:
+  type: grpc
+  initialDelaySeconds: 15
+livenessProbe:
+  type: grpc
+  initialDelaySeconds: 15
+  periodSeconds: 10
+networkPolicy:
+  allowedFrom:
+  - frontend
+  - checkoutservice

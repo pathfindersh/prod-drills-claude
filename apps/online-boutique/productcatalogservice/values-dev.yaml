@@ -1,0 +1,2 @@
+# dev: single replica, no HPA/PDB.
+replicaCount: 1

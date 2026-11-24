@@ -1,0 +1,15 @@
+# Shared by all environments. image.digest = manifest digest verified identical to upstream (mirror-images run 45426379819).
+image:
+  repository: ghcr.io/pathfindersh/currencyservice
+  digest: sha256:c581681bbf9abec8563e520aac3f3dbe3e7498853b6eb263193bc80c87e42f74
+containerPort: 7000
+env:
+  PORT: 7000
+  DISABLE_PROFILER: 1
+service:
+  port: 7000
+  portName: grpc
+networkPolicy:
+  allowedFrom:
+  - frontend
+  - checkoutservice
