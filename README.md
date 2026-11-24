@@ -81,6 +81,14 @@ merging: `GITOPS_REVISION=<branch> ./bootstrap.sh up --env kodekloud`. Argo UI:
 `kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80`. Passwords are
 generated at bootstrap and printed once. Details: `docs/phases/02-gitops-monitoring.md`.
 
+## Online Boutique (Phase 3)
+
+Source in `src/` (copied once, Apache-2.0, see `src/UPSTREAM.md`), images in `ghcr.io/pathfindersh/*`
+(mirrored by the `mirror-images` GitHub Action, run once: `gh workflow run mirror-images.yml --ref main`),
+deployed per environment by an Argo ApplicationSet using the shared chart `charts/microservice`.
+Dev: `kubectl -n shop-dev port-forward svc/frontend 8080:80`. Validate charts: `scripts/validate-charts.sh dev`
+(needs `kubeconform`). Details and resume notes: `docs/phases/03-application.md`.
+
 ## Storage
 
 Phase 1 leaves the cluster **without a storage driver** (PVCs stay `Pending`). The EKS
