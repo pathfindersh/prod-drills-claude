@@ -2,6 +2,29 @@
 
 > Status: 3a done and verified (dev). 3b (test + prod, LoadBalancer, ownership check) pending. See **RESUME HERE**.
 
+## RESUME HERE (session 3 outcome - read first)
+
+**Session 3 ended early: the playground deleted our cluster ~15 minutes after a fresh `up` with prefix delegation.** Fresh `up` itself was verified (13m58s; `terraform_data.cni_prefix` ran before the ASG; 110 pods on all 3 nodes; 18 apps Healthy; account 975050333241). Nothing of 3b (test/prod/gateways) was built.
+
+Evidence (owner, CloudTrail; the actor is the playground's checker `ConfigRuleCheckerSession840813`, not us):
+- 01:05:36-39 `DescribeInstances`, `DescribeInstanceTypes`, `DescribeVpcs`
+- 01:05:39 `ModifyInstanceCreditSpecification` + `ModifyInstanceAttribute` on our nodes
+- 01:05:47 `ListNodegroups`, `ListFargateProfiles`
+- 01:05:48 `DeleteCluster`, then `DescribeCluster` polling until ~01:09:51
+- No direct ENI API calls. At 01:08 we saw the cluster `DELETING`, ASG `node-asg` (desired 3) and 3 instances still running.
+
+**Hypothesis, UNPROVEN:** a playground compliance rule inspects instances/ENIs, and prefix delegation (ENIs carrying /28 prefixes, visible through `DescribeInstances`) trips it. Why we suspect it: it is the only change vs the earlier sessions, which survived for hours. Other explanations are not excluded (e.g. a rule on node count/credit spec/max pods, or a time-based reset). Do NOT write this up as a known cause until the A/B test below.
+
+Plan for the next session:
+1. **Env toggle `enable_prefix_delegation`** (Terraform variable + per-env tfvars): `false` for `kodekloud`, `true` for `personal`. It controls BOTH the `cni_prefix` step (skip the CNI patch) and `maxPods` (17 when off, 110 when on), so the two can never disagree (see the ordering rule in Concepts).
+2. **A/B test:** `up` with the toggle OFF; confirm the cluster survives > 30 min (ideally into the previous failure window and beyond). Only then can the hypothesis be accepted or rejected. If it dies anyway, the cause is something else; pull CloudTrail again before changing anything.
+3. **Re-plan test + prod for 17 pods/node.** 3 nodes = 51 slots; platform ~26 + dev 12 = ~38, leaving ~13 for test + prod + Envoy Gateway (controller + 2 proxies ~3-4 pods). That is too tight for full environments: test = a small subset (e.g. frontend, productcatalogservice, currencyservice, cartservice, redis-cart, checkoutservice and what it needs), prod = 1 replica, loadgenerator off in test/prod, or run only one of test/prod at a time. Redo the CPU math too (see item 2 below; CPU also ~1.4/5.8 used by the platform).
+4. Then continue the list below (test/prod values, gateways, proofs, ownership, NetworkPolicy), now at 17 pods/node.
+
+Also: if the lab shows `DELETING` unexpectedly, run `aws eks describe-cluster` and read CloudTrail before re-running `up`; `down` is still the clean way to remove orphaned ASG/instances.
+
+---
+
 ## RESUME HERE (for 3b, continued)
 
 State at end of session 2 (branch `feat/phase-3-application`, PR #8 still DRAFT, not merged):
@@ -102,7 +125,7 @@ kubectl get nodes -o custom-columns=NAME:.metadata.name,PODS:.status.allocatable
 kubectl get pods,pvc -n shop-dev                # 12/12 Running, 0 restarts; data-redis-cart-0 Bound (same PV as before)
 ```
 Result: allocatable pods 17 -> 110 on all 3 nodes; same redis PV reattached after its node was replaced.
-Not yet verified: the fresh-`up` path (see RESUME HERE item 1).
+Fresh-`up` path verified in session 3 (13m58s, `cni_prefix` before the ASG, 110 pods on all nodes) - but the lab was then deleted by the playground; see RESUME HERE.
 
 
 ### Teardown with a PVC in use (session 2, run by the owner, output confirmed)
@@ -122,6 +145,7 @@ No timeout on the PVC and no manual scale needed: the earlier `pvc-protection` f
 | error message | root cause | command that failed | command that worked | lesson |
 |---|---|---|---|---|
 | `timed out waiting for the condition on persistentvolumeclaims/data-redis-cart-0` during `./bootstrap.sh down` | `redis-cart-0` still mounted the PVC; the `kubernetes.io/pvc-protection` finalizer blocks deletion while a pod uses it | `kubectl delete pvc --all -A --wait=true` | `kubectl -n shop-dev scale statefulset,deployment --all --replicas=0`, then re-run `./bootstrap.sh down`. `down` now does the scale-down itself (Argo is stopped first so selfHeal cannot undo it) | Stateful workloads must be stopped before their volumes can be deleted; teardown order matters |
+| Cluster deleted by the playground ~15 min after fresh `up` (kubectl: `no such host`; `aws eks describe-cluster` -> `DELETING`) | CloudTrail shows the playground checker `ConfigRuleCheckerSession840813` calling `DeleteCluster` at 01:05:48 after inspecting instances. **Root cause UNPROVEN**; hypothesis: prefix delegation trips a playground rule | `./bootstrap.sh up --env kodekloud` (prefix delegation on) then `kubectl get nodes` | none; lab ended. Next: toggle prefix delegation off for kodekloud and A/B test (RESUME HERE) | Playground rules can delete resources that look non-standard; keep risky features behind a per-env toggle and test one change at a time |
 | `Cannot evict pod ... would violate the pod's disruption budget` (coredns) while draining node 2 | coredns PodDisruptionBudget: only 1 of 2 replicas may be down | `kubectl drain <node> ...` (first attempt) | same command, retried/left running; it succeeded once the first coredns pod was Ready on another node. No `--disable-eviction`. | The PDB is doing its job; wait for it, do not force |
 | (no error) `kubeconform` hung, no output | schema download from GitHub stalled | `helm template ... \| kubeconform -strict -` | `kubeconform -cache <dir>` with `timeout`+retry (built into `scripts/validate-charts.sh`) | CI tools that fetch schemas need a cache and a timeout |
 | `workflow_dispatch` unavailable on branch | GitHub only dispatches workflows present on the default branch | (anticipated, not run) `gh workflow run --ref <branch>` | workflow shipped in tiny PR #7 to main first | Workflows live on main even if everything else is on a feature branch |
@@ -149,7 +173,7 @@ No timeout on the PVC and no manual scale needed: the earlier `pvc-protection` f
 - **Why images are pinned by digest.** A tag (`v0.10.7`, `alpine`) is a movable label; a digest (`sha256:...`) is the content hash. Pulling by digest guarantees the same bytes on every node, in every environment, today and in a year, and tamper/replace is detectable. Analogy: tag = a name on a parcel, digest = the parcel's fingerprint. The schema enforces it so nobody sneaks in `:latest`.
 - **GITHUB_TOKEN vs PAT for GHCR.** The built-in `GITHUB_TOKEN` is created per run, scoped by the workflow's `permissions:` (`packages: write`), expires when the run ends, and nothing is stored. Fine-grained PATs cannot push to GHCR (classic PATs can, but they are long-lived and broad). So CI pushes, never a laptop; the credential cannot leak because it does not exist outside the run.
 - **Redis as StatefulSet, not Deployment.** A gp3 EBS volume is ReadWriteOnce: attachable to one node. A Deployment's RollingUpdate starts the new pod before stopping the old one; if they land on different nodes the new pod hits a Multi-Attach error and the rollout hangs. A StatefulSet stops the old pod first and gives each replica its own PVC. Trade-off: brief downtime on update (acceptable for a cart cache; for real data use replication).
-- **Prefix delegation.** Normally each pod gets its own secondary IP from an ENI slot; a t3.medium has 3 ENIs x 6 IPs, giving 17 pods. With prefix delegation each slot holds a /28 (16 IPs), so ~110 pods fit. Analogy: instead of handing out single parking tickets, the car park hands out whole rows. Ordering matters: the kubelet's `maxPods` (nodes.tf) and the CNI mode must agree; if a node advertises 110 without prefix mode, pods schedule and then fail for lack of IPs. Hence the CNI patch runs first (Terraform dependency), and nodes must be replaced for the new `maxPods` to apply.
+- **Prefix delegation (caveat: unproven interaction with the KodeKloud playground, see RESUME HERE).** Normally each pod gets its own secondary IP from an ENI slot; a t3.medium has 3 ENIs x 6 IPs, giving 17 pods. With prefix delegation each slot holds a /28 (16 IPs), so ~110 pods fit. Analogy: instead of handing out single parking tickets, the car park hands out whole rows. Ordering matters: the kubelet's `maxPods` (nodes.tf) and the CNI mode must agree; if a node advertises 110 without prefix mode, pods schedule and then fail for lack of IPs. Hence the CNI patch runs first (Terraform dependency), and nodes must be replaced for the new `maxPods` to apply.
 - **Draining and PodDisruptionBudgets.** `kubectl drain` evicts pods through the eviction API, which respects PDBs: coredns allows only one replica to be down, so the second eviction is refused until the first replacement is Ready elsewhere. That pause is the safety net that kept DNS up during the node rollout. Never force past a PDB in production; wait, or fix capacity. Rolling nodes one at a time, with the cluster healthy between each, is the manual equivalent of a surge-free rolling update.
 - **Pod slots.** On EKS with the VPC CNI each pod needs an ENI IP; t3.medium allows 17 pods. Capacity planning must count pods, not just CPU/memory.
 - **NetworkPolicy** is default-deny ingress with an allow list per service. It is only enforced if the CNI enables it (not yet here).
