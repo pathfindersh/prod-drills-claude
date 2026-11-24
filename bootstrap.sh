@@ -416,6 +416,19 @@ cmd_down() {
       | while read -r ns name; do kubectl delete svc -n "$ns" "$name" --wait=true --timeout=300s; done
     step_done "services"
 
+    # A PVC held by a running pod never finishes deleting (pvc-protection finalizer), so
+    # scale every StatefulSet/Deployment in namespaces that own PVCs to 0 first. Argo is already
+    # stopped, so nothing scales them back. kube-system/argocd are skipped: the EBS CSI
+    # controller must keep running to detach and delete the volumes.
+    step_start "scale workloads in PVC namespaces to 0 (release volumes)"
+    kubectl get pvc -A -o json | jq -r '.items[].metadata.namespace' | sort -u \
+      | grep -vxE 'kube-system|argocd' | while read -r ns; do
+          kubectl -n "$ns" scale statefulset,deployment --all --replicas=0 >/dev/null
+          kubectl -n "$ns" wait --for=delete pod --all --timeout=180s >/dev/null 2>&1 \
+            || warn "pods still terminating in $ns"
+        done
+    step_done "workloads scaled down"
+
     step_start "delete PVCs (releases EBS volumes)"
     kubectl delete pvc --all -A --wait=true --timeout=180s \
       || die "PVCs still bound (a pod likely uses them). Delete the owning workloads, then re-run down."
