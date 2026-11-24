@@ -2,19 +2,23 @@
 
 > Status: 3a done and verified (dev). 3b (test + prod, LoadBalancer, ownership check) pending. See **RESUME HERE**.
 
-## RESUME HERE (for 3b)
+## RESUME HERE (for 3b, continued)
 
-State: branch `feat/phase-3-application` (draft PR open, NOT merged). PR #7 (mirror workflow) is merged. 13 images exist public in `ghcr.io/pathfindersh/*` (survive the playground wipe). Argo in a fresh session tracks `main`, so dev will not appear until this branch is merged or you re-point.
+State at end of session 2 (branch `feat/phase-3-application`, PR #8 still DRAFT, not merged):
+- DONE and verified: prefix delegation (maxPods 110 on all 3 nodes, CNI patched before nodes), node rollout, shop-dev healthy with the same redis PVC.
+- NOT done: test + prod, gateways, proofs, ownership check, NetworkPolicy enforcement.
+- Dev will not exist in a new lab unless Argo tracks this branch: `GITOPS_REVISION=feat/phase-3-application ./bootstrap.sh up --env kodekloud` (or merge PR #8 first).
 
-3b checklist, in order:
-1. New session: safety checks, `./bootstrap.sh up --env kodekloud` with `GITOPS_REVISION=feat/phase-3-application` (or merge first, then plain `up`). Dev should come back by itself from Git.
-2. **Pod-slot limit (the real constraint).** t3.medium = 17 pods/node (ENI limit) = 51 on 3 nodes. Platform uses ~26, dev uses 12 -> ~38. A full test (12) + prod (12+, with 2 replicas ~22) will NOT fit (> 51). Options: (a) test = subset (frontend, productcatalogservice, cartservice, redis-cart, checkoutservice and its deps only), (b) prod 1 replica for low-traffic services, loadgenerator off in test/prod, (c) tear dev down while testing prod. Decide with the owner BEFORE enabling envs. CPU/memory are not the limit (about 1.4 of 5.8 CPU requested by platform).
-3. Fill `values-test.yaml` / `values-prod.yaml` (currently stubs: replicas only), add `test`, `prod` to `onlineBoutique.environments` in `platform/apps/values.yaml`.
-4. Frontend LoadBalancer: `service.type: LoadBalancer` for prod (and test if desired) in the frontend env values. Check the AWS cloud controller can create an ELB with the playground IAM; on AccessDenied STOP and report.
-5. Ownership check across all envs (see "How to verify").
-6. Optional hardening: HPA/PDB in prod (metrics-server exists), enforce NetworkPolicy (needs VPC CNI `enableNetworkPolicy`; today policies exist but are not enforced), CI running `scripts/validate-charts.sh`.
-7. Finish docs (sections 5-10 for test/prod), mark PR ready, owner merges, **then re-point Argo to main** (plain `./bootstrap.sh up --env kodekloud` without `GITOPS_REVISION`).
-8. Known loose ends: `busybox` is mirrored but unused; `shoppingassistantservice` not deployed (frontend still needs `SHOPPING_ASSISTANT_SERVICE_ADDR` set, it is a dead address).
+Next session, in order:
+1. **Fresh-up verification of prefix delegation.** On a brand-new cluster (`up` from zero) check `kubectl get nodes -o custom-columns=NAME:.metadata.name,PODS:.status.allocatable.pods` shows 110 straight away, and that the CNI env was set before the nodes joined (`terraform_data.cni_prefix` precedes the ASG). Only the in-place path (existing cluster) is verified so far.
+2. **Capacity math before enabling environments.** One full environment requests 1.57 CPU / 1.37 GiB; platform ~1.36 CPU. Dev + test + prod at defaults = ~6.07 CPU > 5.79 allocatable. Plan: loadgenerator off in test/prod, trimmed requests in test, prod 2 replicas only for frontend. Recompute from live `kubectl describe nodes` before syncing. Pod slots are no longer the limit.
+3. **Test + prod.** Fill `values-test.yaml` / `values-prod.yaml` (stubs now), add `test`, `prod` to `onlineBoutique.environments` in `platform/apps/values.yaml`. The frontend supports `BASE_URL` natively (`src/frontend/main.go`), so set `BASE_URL=/dev`, `/test` per env and none for prod; no URL rewriting.
+4. **Gateways (Envoy Gateway, Gateway API; not ingress-nginx).** Two Gateways = two LoadBalancers. PUBLIC: `/` -> shop-prod, `/dev`, `/test`. ADMIN: `/argocd`, `/grafana`, locked with `loadBalancerSourceRanges` (EnvoyProxy `envoyService`). Hostnames, paths and CIDRs are VALUES in `platform/apps/values.yaml`. `bootstrap.sh up` detects the current public IP (HTTPS lookup, env override) and passes it as a Helm parameter; never committed. Argo CD: `server.rootpath` + `basehref` = `/argocd`; Grafana: `root_url` + `serve_from_sub_path`. Watch for the Phase 2 chart-download timeout (Envoy Gateway chart is OCI).
+5. **Proofs.** Shop via public LB on all 3 paths; admin URLs work from the owner's IP and are unreachable from another source (e.g. a short-lived pod/other host curling the ELB DNS, plus the ELB security group rules).
+6. **Ownership check:** every container image in `shop-*` is `ghcr.io/pathfindersh/...@sha256:...`.
+7. **NetworkPolicy enforcement** (`aws-eks-nodeagent` is already present, mode `standard`; likely only the node-agent enable flag) plus a proof that a policy blocks traffic.
+8. **End of session:** first real test of the new `down` (scales workloads in PVC namespaces to 0 before deleting PVCs). Then mark PR ready; owner merges; re-point Argo to main.
+9. Known loose ends: `busybox` mirrored but unused; `shoppingassistantservice` address is dead; plain HTTP on both entrances until TLS (Phase 3.5).
 
 ## 1. Goal
 Run the Online Boutique shop from our own repo and our own registry: source copied once into `src/`, every image mirrored byte-for-byte into `ghcr.io/pathfindersh` by a GitHub Actions workflow, one reusable Helm chart (`charts/microservice`) that every service uses, and Argo CD deploying it per environment through a service x environment ApplicationSet. 3a delivers the `dev` environment.
@@ -79,10 +83,31 @@ kubectl -n shop-dev port-forward svc/frontend 8080:80     # browse http://localh
 ```
 Not yet run in this session: `helm template` with `values-dev` read by the owner as a standalone step (covered by item 1).
 
+
+### Prefix delegation + node rollout (session 2, all run by the owner, output confirmed)
+```bash
+cd infra/terraform
+terraform plan  -var-file=envs/kodekloud.tfvars -var region=us-east-1 -out=p3b.tfplan   # 1 to add, 2 to change, 0 to destroy
+terraform apply p3b.tfplan                      # CNI rolled out BEFORE the ASG update; Apply complete! 1 added, 2 changed
+kubectl -n kube-system get ds aws-node -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="ENABLE_PREFIX_DELEGATION")].value}{"\n"}'   # true
+
+# per node (repeat x3, one at a time):
+kubectl cordon <node>
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data --timeout=180s
+aws ec2 terminate-instances --region us-east-1 --instance-ids <instance-id> --query 'TerminatingInstances[0].CurrentState.Name'   # shutting-down
+kubectl get nodes -w                            # replacement node appears Ready in ~2-3 min
+kubectl get nodes -o custom-columns=NAME:.metadata.name,PODS:.status.allocatable.pods   # 17 -> 110
+
+kubectl get pods,pvc -n shop-dev                # 12/12 Running, 0 restarts; data-redis-cart-0 Bound (same PV as before)
+```
+Result: allocatable pods 17 -> 110 on all 3 nodes; same redis PV reattached after its node was replaced.
+Not yet verified: the fresh-`up` path (see RESUME HERE item 1).
+
 ## 5. Problems hit and fixes
 | error message | root cause | command that failed | command that worked | lesson |
 |---|---|---|---|---|
 | `timed out waiting for the condition on persistentvolumeclaims/data-redis-cart-0` during `./bootstrap.sh down` | `redis-cart-0` still mounted the PVC; the `kubernetes.io/pvc-protection` finalizer blocks deletion while a pod uses it | `kubectl delete pvc --all -A --wait=true` | `kubectl -n shop-dev scale statefulset,deployment --all --replicas=0`, then re-run `./bootstrap.sh down`. `down` now does the scale-down itself (Argo is stopped first so selfHeal cannot undo it) | Stateful workloads must be stopped before their volumes can be deleted; teardown order matters |
+| `Cannot evict pod ... would violate the pod's disruption budget` (coredns) while draining node 2 | coredns PodDisruptionBudget: only 1 of 2 replicas may be down | `kubectl drain <node> ...` (first attempt) | same command, retried/left running; it succeeded once the first coredns pod was Ready on another node. No `--disable-eviction`. | The PDB is doing its job; wait for it, do not force |
 | (no error) `kubeconform` hung, no output | schema download from GitHub stalled | `helm template ... \| kubeconform -strict -` | `kubeconform -cache <dir>` with `timeout`+retry (built into `scripts/validate-charts.sh`) | CI tools that fetch schemas need a cache and a timeout |
 | `workflow_dispatch` unavailable on branch | GitHub only dispatches workflows present on the default branch | (anticipated, not run) `gh workflow run --ref <branch>` | workflow shipped in tiny PR #7 to main first | Workflows live on main even if everything else is on a feature branch |
 | image `manifest unknown` / 403 for guessed path | upstream v0.10.7 images are published under `online-boutique-ci`, not `google-samples` | `skopeo inspect docker://us-central1-docker.pkg.dev/google-samples/microservices-demo/frontend:v0.10.7` | same with `.../online-boutique-ci/microservices-demo/...` | Verify the registry path anonymously before building automation on it |
@@ -109,6 +134,8 @@ Not yet run in this session: `helm template` with `values-dev` read by the owner
 - **Why images are pinned by digest.** A tag (`v0.10.7`, `alpine`) is a movable label; a digest (`sha256:...`) is the content hash. Pulling by digest guarantees the same bytes on every node, in every environment, today and in a year, and tamper/replace is detectable. Analogy: tag = a name on a parcel, digest = the parcel's fingerprint. The schema enforces it so nobody sneaks in `:latest`.
 - **GITHUB_TOKEN vs PAT for GHCR.** The built-in `GITHUB_TOKEN` is created per run, scoped by the workflow's `permissions:` (`packages: write`), expires when the run ends, and nothing is stored. Fine-grained PATs cannot push to GHCR (classic PATs can, but they are long-lived and broad). So CI pushes, never a laptop; the credential cannot leak because it does not exist outside the run.
 - **Redis as StatefulSet, not Deployment.** A gp3 EBS volume is ReadWriteOnce: attachable to one node. A Deployment's RollingUpdate starts the new pod before stopping the old one; if they land on different nodes the new pod hits a Multi-Attach error and the rollout hangs. A StatefulSet stops the old pod first and gives each replica its own PVC. Trade-off: brief downtime on update (acceptable for a cart cache; for real data use replication).
+- **Prefix delegation.** Normally each pod gets its own secondary IP from an ENI slot; a t3.medium has 3 ENIs x 6 IPs, giving 17 pods. With prefix delegation each slot holds a /28 (16 IPs), so ~110 pods fit. Analogy: instead of handing out single parking tickets, the car park hands out whole rows. Ordering matters: the kubelet's `maxPods` (nodes.tf) and the CNI mode must agree; if a node advertises 110 without prefix mode, pods schedule and then fail for lack of IPs. Hence the CNI patch runs first (Terraform dependency), and nodes must be replaced for the new `maxPods` to apply.
+- **Draining and PodDisruptionBudgets.** `kubectl drain` evicts pods through the eviction API, which respects PDBs: coredns allows only one replica to be down, so the second eviction is refused until the first replacement is Ready elsewhere. That pause is the safety net that kept DNS up during the node rollout. Never force past a PDB in production; wait, or fix capacity. Rolling nodes one at a time, with the cluster healthy between each, is the manual equivalent of a surge-free rolling update.
 - **Pod slots.** On EKS with the VPC CNI each pod needs an ENI IP; t3.medium allows 17 pods. Capacity planning must count pods, not just CPU/memory.
 - **NetworkPolicy** is default-deny ingress with an allow list per service. It is only enforced if the CNI enables it (not yet here).
 
