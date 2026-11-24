@@ -12,7 +12,7 @@ permissions:
 
 env:
   UPSTREAM: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo
-  TAG: v0.10.7
+  TAG: v0.10.7   # images verified anonymously pullable from this registry (online-boutique-ci)
 
 jobs:
   mirror:
@@ -41,7 +41,7 @@ jobs:
                    productcatalogservice recommendationservice shippingservice; do
             LIST+="$s|$UPSTREAM/$s:$TAG"$'\n'
           done
-          LIST+="redis|docker.io/library/redis:alpine"$'\n'
+          LIST+="redis|docker.io/library/redis:7.4.9-alpine"$'\n'
           LIST+="busybox|docker.io/library/busybox:1.38.0"$'\n'
 
           while IFS='|' read -r name src; do
