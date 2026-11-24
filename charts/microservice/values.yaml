@@ -1,0 +1,98 @@
+# Defaults are production-leaning: non-root, read-only rootfs, no SA token,
+# NetworkPolicy on. Per-service files override only what differs.
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+# Images are referenced ONLY by digest (repository@sha256:...). No tags.
+image:
+  repository: ""       # e.g. ghcr.io/pathfindersh/frontend
+  digest: ""           # sha256:<64 hex>
+  pullPolicy: IfNotPresent
+
+command: []
+args: []
+
+containerPort: 8080
+containerPortName: grpc
+
+# Plain config -> rendered into a ConfigMap, injected with envFrom.
+env: {}
+# Name of an EXISTING Secret (created out-of-band, e.g. SOPS). Injected with envFrom.
+# The chart never creates or holds secret values.
+secretRef: ""
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: ""       # defaults to containerPort
+  portName: grpc
+
+# probe.type: grpc | httpGet | tcpSocket | none
+readinessProbe:
+  type: grpc
+  initialDelaySeconds: 5
+  periodSeconds: 10
+livenessProbe:
+  type: grpc
+  initialDelaySeconds: 15
+  periodSeconds: 10
+# httpGet only: path + optional headers [{name, value}]
+
+resources:
+  requests: { cpu: 100m, memory: 64Mi }
+  limits:   { cpu: 200m, memory: 128Mi }
+
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+securityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Ingress policy: only pods whose app.kubernetes.io/name is in allowedFrom
+# (same namespace) may connect. fromAnywhere opens the port to all (frontend).
+networkPolicy:
+  enabled: true
+  allowedFrom: []
+  fromAnywhere: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+pdb:
+  enabled: false
+  minAvailable: 1
+
+# persistence.enabled switches the workload from a Deployment to a StatefulSet.
+# Why: a ReadWriteOnce EBS volume can attach to ONE node. A Deployment's
+# RollingUpdate starts the new pod before stopping the old one -> Multi-Attach
+# error and a hung rollout. A StatefulSet replaces pods one at a time (old pod
+# terminates first) and gives each replica its own PVC via volumeClaimTemplates.
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClassName: ""     # empty = cluster default (gp3)
+  mountPath: /data
