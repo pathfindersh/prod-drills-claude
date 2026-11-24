@@ -6,6 +6,7 @@
 
 State at end of session 2 (branch `feat/phase-3-application`, PR #8 still DRAFT, not merged):
 - DONE and verified: prefix delegation (maxPods 110 on all 3 nodes, CNI patched before nodes), node rollout, shop-dev healthy with the same redis PVC.
+- DONE and verified: `./bootstrap.sh down` with the PVC fix (5m04s, clean leftover check). Lab is torn down; the next session starts from zero (`up`).
 - NOT done: test + prod, gateways, proofs, ownership check, NetworkPolicy enforcement.
 - Dev will not exist in a new lab unless Argo tracks this branch: `GITOPS_REVISION=feat/phase-3-application ./bootstrap.sh up --env kodekloud` (or merge PR #8 first).
 
@@ -17,7 +18,7 @@ Next session, in order:
 5. **Proofs.** Shop via public LB on all 3 paths; admin URLs work from the owner's IP and are unreachable from another source (e.g. a short-lived pod/other host curling the ELB DNS, plus the ELB security group rules).
 6. **Ownership check:** every container image in `shop-*` is `ghcr.io/pathfindersh/...@sha256:...`.
 7. **NetworkPolicy enforcement** (`aws-eks-nodeagent` is already present, mode `standard`; likely only the node-agent enable flag) plus a proof that a policy blocks traffic.
-8. **End of session:** first real test of the new `down` (scales workloads in PVC namespaces to 0 before deleting PVCs). Then mark PR ready; owner merges; re-point Argo to main.
+8. **End of session:** `down` with the PVC fix is VERIFIED (see section 4); just run it again. Then mark PR ready; owner merges; re-point Argo to main.
 9. Known loose ends: `busybox` mirrored but unused; `shoppingassistantservice` address is dead; plain HTTP on both entrances until TLS (Phase 3.5).
 
 ## 1. Goal
@@ -103,6 +104,20 @@ kubectl get pods,pvc -n shop-dev                # 12/12 Running, 0 restarts; dat
 Result: allocatable pods 17 -> 110 on all 3 nodes; same redis PV reattached after its node was replaced.
 Not yet verified: the fresh-`up` path (see RESUME HERE item 1).
 
+
+### Teardown with a PVC in use (session 2, run by the owner, output confirmed)
+```bash
+./bootstrap.sh down --env kodekloud
+#  ==> stop Argo CD controller           (3s)
+#  ==> delete LoadBalancer Services      (2s)
+#  ==> scale workloads in PVC namespaces to 0 (release volumes)   (37s)
+#  ==> delete PVCs: persistentvolumeclaim "data-redis-cart-0" deleted from shop-dev namespace   (4s)
+#  ==> terraform destroy: "Destroy complete! Resources: 23 destroyed."   (includes terraform_data.cni_prefix)
+#  ==> leftover check clean (no cluster, instances, unattached volumes, load balancers)
+#  ==> down complete in 5m4s
+```
+No timeout on the PVC and no manual scale needed: the earlier `pvc-protection` failure is fixed.
+
 ## 5. Problems hit and fixes
 | error message | root cause | command that failed | command that worked | lesson |
 |---|---|---|---|---|
@@ -150,3 +165,7 @@ Not yet verified: the fresh-`up` path (see RESUME HERE item 1).
 1. **Mutable/unavailable image:** change a digest to a nonexistent one (or make the GHCR package private). Pods go `ImagePullBackOff`; Argo shows Degraded. Diagnose with `kubectl describe pod`, fix by restoring the digest/visibility.
 2. **Multi-Attach hang:** change redis-cart back to a Deployment with an RWO PVC and roll it. Rollout stalls with `Multi-Attach error for volume`.
 3. **Pod-slot exhaustion:** enable test + prod without trimming. New pods sit `Pending` with `Too many pods`; CPU graphs look healthy, which is the trap.
+
+## Follow-ups
+- **(a) Phase 3.5 - domain, TLS, SSO.** Buy a domain, then: hostnames as Gateway/HTTPRoute values (already planned as values, no rewrite), TLS via cert-manager (Let's Encrypt) on both entrances, SSO for Argo CD and Grafana (GitHub first; Entra ID or Keycloak optional), secrets via SOPS (scaffold exists). Until then both entrances are plain HTTP: a KNOWN GAP, mitigated only by the admin load balancer's source-IP allow-list.
+- **(b) Personal-AWS production cluster - secrets.** Use AWS Secrets Manager with the External Secrets Operator, authenticated through IRSA or EKS Pod Identity. Never plain Kubernetes Secrets or values in Git. The chart already only *references* secrets (`secretRef`), so it needs no change.
