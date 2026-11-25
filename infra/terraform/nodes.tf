@@ -109,31 +109,16 @@ resource "aws_launch_template" "node" {
   }
 
   # AL2023 has no /etc/eks/bootstrap.sh; nodes join via nodeadm reading this NodeConfig.
-  user_data = base64encode(<<-EOT
-    MIME-Version: 1.0
-    Content-Type: multipart/mixed; boundary="BOUNDARY"
-
-    --BOUNDARY
-    Content-Type: application/node.eks.aws
-
-    ---
-    apiVersion: node.eks.aws/v1alpha1
-    kind: NodeConfig
-    spec:
-      cluster:
-        name: ${aws_eks_cluster.this.name}
-        apiServerEndpoint: ${aws_eks_cluster.this.endpoint}
-        certificateAuthority: ${aws_eks_cluster.this.certificate_authority[0].data}
-        cidr: ${aws_eks_cluster.this.kubernetes_network_config[0].service_ipv4_cidr}
-    %{~if var.enable_prefix_delegation~}
-      kubelet:
-        config:
-          # 110 only works with VPC CNI prefix delegation (terraform_data.cni_prefix below).
-          maxPods: 110
-    %{~endif~}
-    --BOUNDARY--
-  EOT
-  )
+  # The MIME document lives in a template file at column 0 on purpose: a heredoc with template
+  # directives (%{ if }) gets its indentation mangled, which makes the MIME unparseable and
+  # nodes never join. scripts/test-user-data.sh pins the exact bytes (testdata/*.golden).
+  user_data = base64encode(templatefile("${path.module}/templates/user_data.tpl", {
+    cluster_name      = aws_eks_cluster.this.name
+    endpoint          = aws_eks_cluster.this.endpoint
+    ca_data           = aws_eks_cluster.this.certificate_authority[0].data
+    service_cidr      = aws_eks_cluster.this.kubernetes_network_config[0].service_ipv4_cidr
+    prefix_delegation = var.enable_prefix_delegation
+  }))
 }
 
 # No instance_refresh: a rolling refresh surges above max and would break the

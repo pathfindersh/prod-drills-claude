@@ -1,0 +1,20 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+--BOUNDARY
+Content-Type: application/node.eks.aws
+
+---
+apiVersion: node.eks.aws/v1alpha1
+kind: NodeConfig
+spec:
+  cluster:
+    name: demo-eks
+    apiServerEndpoint: https://EXAMPLE.eks.amazonaws.com
+    certificateAuthority: Q0FEQVRB
+    cidr: 10.100.0.0/16
+  kubelet:
+    config:
+      # 110 only works with VPC CNI prefix delegation (terraform_data.cni_prefix below).
+      maxPods: 110
+--BOUNDARY--
