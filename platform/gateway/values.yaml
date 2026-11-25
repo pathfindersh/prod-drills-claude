@@ -1,6 +1,12 @@
 # Plain HTTP on BOTH entrances until TLS (Phase 3.5). Hostnames, paths and CIDRs are values.
 gatewayClassName: lab-envoy
 
+# Annotations for BOTH entrance Services. In-tree NLB: the KodeKloud checker deleted the default
+# Classic ELBs (see docs/phases/03-application.md). Production (personal / v2.0.0) is meant to use the
+# AWS Load Balancer Controller instead (NLB IP mode, admin scheme=internal behind a VPN).
+serviceAnnotations:
+  service.beta.kubernetes.io/aws-load-balancer-type: nlb
+
 proxy:
   replicas: 1
   resources:

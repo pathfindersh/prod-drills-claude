@@ -25,6 +25,9 @@ spec:
           resources: {{ toYaml $.Values.proxy.resources | nindent 12 }}
       envoyService:
         type: LoadBalancer
+        {{- with $.Values.serviceAnnotations }}
+        annotations: {{ toYaml . | nindent 10 }}
+        {{- end }}
         {{- if $e.cidrs }}
         loadBalancerSourceRanges: {{ toYaml $e.cidrs | nindent 10 }}
         {{- end }}
