@@ -422,18 +422,59 @@ destroy_fallback() {
   return 0
 }
 
-# Independent of Terraform state: anything billable still there?
+# aws_check <thing> <aws args...>: puts the output in CHECK_OUT. A failed call (AccessDenied, network,
+# expired credentials) is reported and returns 1: "could not look" must never read as "nothing there".
+aws_check() {
+  local thing="$1" err rc=0; shift
+  err="$(mktemp)"
+  CHECK_OUT="$(aws "$@" 2>"$err")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    CHECK_OUT=""
+    warn "could not check $thing: $(tr '\n' ' ' <"$err" | sed 's/^ *//; s/ *$//')"
+  fi
+  rm -f "$err"
+  [ "$rc" -eq 0 ]
+}
+
+# One leftover_check probe (sets the caller's `bad`).
+leftover_probe() { # <thing> <message when something is found> <aws args...>
+  local thing="$1" msg="$2"; shift 2
+  if ! aws_check "$thing" "$@"; then bad=1
+  elif [ -n "$CHECK_OUT" ]; then warn "$msg: $CHECK_OUT"; bad=1
+  fi
+}
+
+# Independent of Terraform state: anything billable or left behind? Reports only, deletes nothing.
+# Fails closed: "clean" is printed only if every check ran AND found nothing.
 leftover_check() {
-  local bad=0 out
-  out="$(aws eks list-clusters --region "$REGION" --query "clusters[?@=='$CLUSTER_NAME']" --output text 2>/dev/null || true)"
-  [ -z "$out" ] || { warn "cluster still listed: $out"; bad=1; }
-  out="$(aws ec2 describe-instances --region "$REGION" --filters "Name=tag:kubernetes.io/cluster/$CLUSTER_NAME,Values=owned" "Name=instance-state-name,Values=running,pending" --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
-  [ -z "$out" ] || { warn "instances still running: $out"; bad=1; }
-  out="$(aws ec2 describe-volumes --region "$REGION" --filters Name=status,Values=available --query 'Volumes[].VolumeId' --output text 2>/dev/null || true)"
-  [ -z "$out" ] || { warn "unattached EBS volumes (NOT deleted unless tagged kubernetes.io/cluster/$CLUSTER_NAME): $out"; bad=1; }
-  out="$(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerName' --output text 2>/dev/null || true)"
-  [ -z "$out" ] || { warn "load balancers: $out"; bad=1; }
-  [ "$bad" = 0 ] && info "leftover check clean (no cluster, instances, unattached volumes, load balancers)"
+  local bad=0 sgs=""
+  leftover_probe "EKS clusters" "cluster still listed" \
+    eks list-clusters --region "$REGION" --query "clusters[?@=='$CLUSTER_NAME']" --output text
+  leftover_probe "EC2 instances" "instances still running" \
+    ec2 describe-instances --region "$REGION" --filters "Name=tag:kubernetes.io/cluster/$CLUSTER_NAME,Values=owned" "Name=instance-state-name,Values=running,pending" --query 'Reservations[].Instances[].InstanceId' --output text
+  leftover_probe "EBS volumes" "unattached EBS volumes (NOT deleted unless tagged kubernetes.io/cluster/$CLUSTER_NAME)" \
+    ec2 describe-volumes --region "$REGION" --filters Name=status,Values=available --query 'Volumes[].VolumeId' --output text
+  leftover_probe "NLB/ALB load balancers" "load balancers" \
+    elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerName' --output text
+  leftover_probe "Classic load balancers" "classic load balancers" \
+    elb describe-load-balancers --region "$REGION" --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text
+  # Security groups the in-tree cloud provider creates for load balancers.
+  if aws_check "security groups tagged for $CLUSTER_NAME" ec2 describe-security-groups --region "$REGION" \
+       --filters "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" --query 'SecurityGroups[].[GroupId,GroupName]' --output text
+  then sgs+="$CHECK_OUT"$'\n'; else bad=1; fi
+  if aws_check "security groups named k8s-elb-*" ec2 describe-security-groups --region "$REGION" \
+       --filters "Name=group-name,Values=k8s-elb-*" --query 'SecurityGroups[].[GroupId,GroupName]' --output text
+  then sgs+="$CHECK_OUT"$'\n'; else bad=1; fi
+  sgs="$(sed '/^$/d' <<<"$sgs" | sort -u)"
+  if [ -n "$sgs" ]; then
+    warn "leftover security groups (report only; k8s-elb-* may belong to ANOTHER cluster - check tags before deleting):"
+    echo "$sgs" >&2; bad=1
+  fi
+  if [ "$bad" = 0 ]; then
+    info "leftover check clean (no cluster, instances, unattached volumes, load balancers, security groups)"
+  else
+    warn "leftover check NOT clean (see warnings above)"
+  fi
   return 0
 }
 
@@ -458,9 +499,10 @@ cluster_state() {
 # are reported by leftover_check as warnings and left alone.
 delete_orphan_volumes() {
   local ids id name
-  ids="$(aws ec2 describe-volumes --region "$REGION" \
-          --filters Name=status,Values=available "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" \
-          --query 'Volumes[].VolumeId' --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d' | sort -u)"
+  aws_check "orphaned volumes (nothing deleted)" ec2 describe-volumes --region "$REGION" \
+    --filters Name=status,Values=available "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" \
+    --query 'Volumes[].VolumeId' --output text || return 0
+  ids="$(tr '\t' '\n' <<<"$CHECK_OUT" | sed '/^$/d' | sort -u)"
   [ -n "$ids" ] || return 0
   for id in $ids; do
     name="$(aws ec2 describe-volumes --region "$REGION" --volume-ids "$id" --query "Volumes[0].Tags[?Key=='kubernetes.io/created-for/pvc/name'].Value | [0]" --output text 2>/dev/null || true)"
