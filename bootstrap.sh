@@ -205,13 +205,36 @@ grafana_secret() {
   info "created secret monitoring/grafana-admin"
 }
 
+# What to do about the Helm release "argocd": skip | install | reinstall:<status> | ERROR:<msg>.
+# Only a release in status "deployed" may be skipped. A failed/pending release (e.g. the first install
+# timed out) still exists, so "helm status" succeeds, but nothing usable was installed: skipping it
+# left the cluster without the Application CRD and root.yaml failed. Absent release -> install.
+argo_helm_action() {
+  local out st
+  if out="$(helm status argocd -n argocd -o json 2>&1)"; then
+    st="$(jq -r .info.status <<<"$out")"
+    if [ "$st" = deployed ]; then echo skip; else echo "reinstall:$st"; fi
+  elif grep -qi "release: not found" <<<"$out"; then
+    echo install
+  else
+    echo "ERROR:$out"
+  fi
+}
+
 argo_install() {
   local ver; ver="$(argocd_chart_version)"; [ -n "$ver" ] || die "cannot read argocd chart version from platform/apps/values.yaml"
   # Once installed, Argo manages its own Helm release from Git, so re-running the install adds
   # nothing (and would needlessly depend on the network). Install only the first time.
-  if helm status argocd -n argocd >/dev/null 2>&1; then
-    info "Argo CD release 'argocd' already exists - skipping helm install (Argo self-manages)"
-  else
+  local act; act="$(argo_helm_action)"
+  case "$act" in
+    ERROR:*) die "cannot read the Helm release state of argocd: ${act#ERROR:}" ;;
+    skip) info "Argo CD release 'argocd' is deployed - skipping helm install (Argo self-manages)" ;;
+    reinstall:*)
+      warn "Helm release 'argocd' is in status '${act#reinstall:}' (not deployed): uninstalling it and installing fresh"
+      helm uninstall argocd -n argocd --wait --timeout 5m
+      act=install ;;
+  esac
+  if [ "$act" = install ]; then
     step_start "helm install Argo CD chart $ver from OCI (same values file Argo later uses to manage itself)"
     helm upgrade --install argocd "$ARGOCD_CHART_OCI" --version "$ver" \
       --namespace argocd --create-namespace -f "$ROOT/platform/values/argocd.yaml" --wait --timeout 8m
