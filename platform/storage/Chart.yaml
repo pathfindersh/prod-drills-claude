@@ -1,0 +1,4 @@
+apiVersion: v2
+name: storage
+description: StorageClasses; which one is default is a per-environment value
+version: 0.1.0

@@ -94,5 +94,5 @@ pdb:
 persistence:
   enabled: false
   size: 1Gi
-  storageClassName: ""     # empty = cluster default (gp3)
+  storageClassName: ""     # empty = cluster default (per env: platform/storage)
   mountPath: /data

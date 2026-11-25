@@ -1,0 +1,2 @@
+# gp3 (personal) or gp2-csi (kodekloud). Set per env in platform/apps/values*.yaml.
+defaultClass: gp3

@@ -16,7 +16,7 @@ optional HPA and PDB. Secrets are only *referenced* (`secretRef`), never created
 | `secretRef` | name of an existing Secret -> `envFrom` |
 | `readinessProbe/livenessProbe.type` | `grpc` \| `httpGet` \| `tcpSocket` \| `none` |
 | `networkPolicy.allowedFrom` | list of service names allowed to connect (default-deny otherwise) |
-| `persistence.enabled` | switches to a StatefulSet with a gp3 PVC (see values.yaml for why) |
+| `persistence.enabled` | switches to a StatefulSet with a PVC on the cluster's default StorageClass (see values.yaml for why) |
 | `autoscaling.enabled`, `pdb.enabled` | optional HPA / PDB (not used in dev) |
 
 NetworkPolicy objects are only *enforced* if the CNI has policy enforcement enabled

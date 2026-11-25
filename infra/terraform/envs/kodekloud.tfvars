@@ -8,3 +8,6 @@ node_count         = 3
 # Prefix delegation OFF here: the playground deleted a fresh cluster that had it on (cause unproven;
 # A/B test pending, see docs/phases/03-application.md). Pods/node stays 17.
 enable_prefix_delegation = false
+# Playground rule: gp2 only, max 30GB per node. 20 leaves room for pod volumes.
+node_volume_type = "gp2"
+node_volume_size = 20

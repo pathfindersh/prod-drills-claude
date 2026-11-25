@@ -4,6 +4,8 @@
 # Needs helm, python3 with yaml + jsonschema, and network once to pull the chart.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+scripts/check-no-ip.sh
+scripts/check-env-disk.sh
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 ver="$(python3 -I -c 'import yaml;print(yaml.safe_load(open("platform/apps/values.yaml"))["charts"]["envoyGateway"]["version"])')"
 tgz="${EG_CHART_TGZ:-}"

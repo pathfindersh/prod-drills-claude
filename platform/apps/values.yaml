@@ -14,6 +14,10 @@ charts:
 # pick one by --env). Extra value files for a chart Application, keyed by Application name.
 extraValueFiles: {}
 
+# platform/storage: which StorageClass is the cluster default. gp3, or gp2-csi (EBS CSI, type gp2).
+storage:
+  defaultClass: gp3
+
 # Overrides for platform/gateway (hostnames, paths, CIDRs are VALUES: add a domain/TLS/SSO later
 # without touching templates). detectedCidr is set by `bootstrap.sh up` as a root parameter and is
 # never committed. Add team ranges to extraCidrs. No CIDR at all = no admin load balancer.

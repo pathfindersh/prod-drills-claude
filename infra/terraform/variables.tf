@@ -45,6 +45,23 @@ variable "node_count" {
   }
 }
 
+variable "node_volume_type" {
+  type        = string
+  description = "Node root EBS volume type. kodekloud: gp2 (the playground's documented rule). Keep scripts/check-env-disk.sh in step."
+  default     = "gp3"
+}
+
+variable "node_volume_size" {
+  type        = number
+  description = "Node root EBS volume size in GiB. At least 20 (the AL2023 EKS AMI snapshot). kodekloud: 20."
+  default     = 30
+
+  validation {
+    condition     = var.node_volume_size >= 20
+    error_message = "The EKS AL2023 AMI needs a root volume of at least 20 GiB."
+  }
+}
+
 variable "az_suffixes" {
   type        = list(string)
   description = "AZ letters to use. Not every AZ supports EKS control planes, so default is a,b,c."

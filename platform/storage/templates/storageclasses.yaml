@@ -1,14 +1,16 @@
-# gp3 is the cluster default. gp2 (created by EKS, in-tree provisioner) is kept but explicitly
-# NOT default. Prune=false: if this file is ever deleted, Argo must not delete EKS's gp2.
+{{- $types := dict "gp3" "gp3" "gp2-csi" "gp2" -}}
+{{- if not (hasKey $types .Values.defaultClass) }}{{ fail (printf "defaultClass %q: use gp3 or gp2-csi" .Values.defaultClass) }}{{ end -}}
+# The default class uses the EBS CSI driver. EKS's own "gp2" (in-tree provisioner) is kept but
+# explicitly NOT default. Prune=false: if it leaves this chart, Argo must not delete EKS's gp2.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: gp3
+  name: {{ .Values.defaultClass }}
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
 provisioner: ebs.csi.aws.com
 parameters:
-  type: gp3
+  type: {{ get $types .Values.defaultClass }}
   fsType: ext4
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true

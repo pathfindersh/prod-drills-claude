@@ -15,4 +15,4 @@ node:
   resources:
     requests: { cpu: 10m, memory: 40Mi }
     limits: { memory: 128Mi }
-storageClasses: []               # StorageClasses live in platform/storage (gp3 default)
+storageClasses: []               # StorageClasses live in platform/storage (default class per env)

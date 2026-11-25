@@ -1,6 +1,9 @@
 # KodeKloud playground (3 x t3.medium, 17 pods/node). Sizing lives in values.yaml.
 # node-exporter off: frees 3 pod slots. Cost: no node CPU/memory/disk history in Prometheus
 # (`kubectl top nodes` still works through metrics-server).
+# Playground rule: gp2 disks only.
+storage:
+  defaultClass: gp2-csi
 extraValueFiles:
   kube-prometheus-stack:
     - platform/values/kodekloud/kube-prometheus-stack.yaml
