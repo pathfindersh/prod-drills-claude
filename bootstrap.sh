@@ -384,7 +384,7 @@ leftover_check() {
   out="$(aws ec2 describe-instances --region "$REGION" --filters "Name=tag:kubernetes.io/cluster/$CLUSTER_NAME,Values=owned" "Name=instance-state-name,Values=running,pending" --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
   [ -z "$out" ] || { warn "instances still running: $out"; bad=1; }
   out="$(aws ec2 describe-volumes --region "$REGION" --filters Name=status,Values=available --query 'Volumes[].VolumeId' --output text 2>/dev/null || true)"
-  [ -z "$out" ] || { warn "unattached EBS volumes: $out"; bad=1; }
+  [ -z "$out" ] || { warn "unattached EBS volumes (NOT deleted unless tagged kubernetes.io/cluster/$CLUSTER_NAME): $out"; bad=1; }
   out="$(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerName' --output text 2>/dev/null || true)"
   [ -z "$out" ] || { warn "load balancers: $out"; bad=1; }
   [ "$bad" = 0 ] && info "leftover check clean (no cluster, instances, unattached volumes, load balancers)"
@@ -405,17 +405,20 @@ cluster_state() {
 }
 
 # Orphans the EBS CSI driver leaves when the cluster dies before it could clean up. Deletes ONLY
-# unattached ("available") volumes that carry a tag set by the driver for this cluster:
-# kubernetes.io/cluster/<name> or ebs.csi.aws.com/cluster. Untagged volumes are never touched.
+# unattached ("available") volumes tagged kubernetes.io/cluster/<this cluster>, which the driver sets
+# via controller.k8sTagClusterId (platform/values/aws-ebs-csi-driver.yaml). The driver's generic
+# ebs.csi.aws.com/cluster=true tag is set by EVERY cluster in the account, so another cluster's
+# volumes could match: it is NOT a delete criterion. Volumes with only the generic tag, or none,
+# are reported by leftover_check as warnings and left alone.
 delete_orphan_volumes() {
-  local ids id name f
-  ids="$( { for f in "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" "Name=tag-key,Values=ebs.csi.aws.com/cluster"; do
-              aws ec2 describe-volumes --region "$REGION" --filters Name=status,Values=available "$f" --query 'Volumes[].VolumeId' --output text 2>/dev/null
-            done; } | tr '\t' '\n' | sed '/^$/d' | sort -u)"
+  local ids id name
+  ids="$(aws ec2 describe-volumes --region "$REGION" \
+          --filters Name=status,Values=available "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" \
+          --query 'Volumes[].VolumeId' --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d' | sort -u)"
   [ -n "$ids" ] || return 0
   for id in $ids; do
     name="$(aws ec2 describe-volumes --region "$REGION" --volume-ids "$id" --query "Volumes[0].Tags[?Key=='kubernetes.io/created-for/pvc/name'].Value | [0]" --output text 2>/dev/null || true)"
-    info "deleting orphaned CSI volume $id (pvc: ${name:-?}) - unattached, tagged for this cluster/CSI"
+    info "deleting orphaned volume $id (pvc: ${name:-?}) - unattached, tagged kubernetes.io/cluster/$CLUSTER_NAME"
     aws ec2 delete-volume --region "$REGION" --volume-id "$id" >/dev/null || warn "could not delete $id"
   done
 }
@@ -520,7 +523,7 @@ cmd_down() {
   rm -f "$log"
   step_done "destroy"
 
-  step_start "orphaned CSI volumes (tagged for this cluster, unattached)"
+  step_start "orphaned volumes tagged kubernetes.io/cluster/$CLUSTER_NAME (unattached)"
   delete_orphan_volumes
   step_done "orphan volumes"
 

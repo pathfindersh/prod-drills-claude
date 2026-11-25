@@ -1,6 +1,12 @@
 # Credentials come from the node role (AmazonEBSCSIDriverPolicy) via IMDS (hop limit 2),
 # so no IRSA / service-account annotation is needed in this lab.
 controller:
+  # Makes the driver tag every volume kubernetes.io/cluster/<id>=owned. `bootstrap.sh down` deletes
+  # orphaned (unattached) volumes ONLY when they carry this tag for ITS cluster. The driver's generic
+  # ebs.csi.aws.com/cluster=true tag is set by every cluster in the account, so it is never enough.
+  # Must equal cluster_name (infra/terraform/variables.tf, default demo-eks); a mismatch only means
+  # `down` warns instead of deleting.
+  k8sTagClusterId: demo-eks
   replicaCount: 1                # default 2; one is enough for a lab and saves memory
   resources:
     requests: { cpu: 10m, memory: 40Mi }
