@@ -55,6 +55,11 @@ expect "classic ELB reported" "$out" "classic load balancers: classic-lb-1"
 [ "$(grep -c '^sg-aaa' <<<"$out")" = 1 ] && echo "ok   same group from both queries listed once" || { echo "FAIL duplicate groups"; rc=1; }
 FOUND=0
 
+# return codes
+leftover_check >/dev/null 2>&1; [ $? = 0 ] && echo "ok   returns 0 when clean" || { echo "FAIL rc clean"; rc=1; }
+FOUND=1; leftover_check >/dev/null 2>&1; [ $? = 1 ] && echo "ok   returns 1 on findings" || { echo "FAIL rc findings"; rc=1; }; FOUND=0
+FAIL_ON=elbv2; leftover_check >/dev/null 2>&1; [ $? = 1 ] && echo "ok   returns 1 when a check fails" || { echo "FAIL rc failed call"; rc=1; }; FAIL_ON=""
+
 FAIL_ON=volumes; out="$(run delete_orphan_volumes)"
 expect "volume cleanup: failed describe is reported" "$out" "could not check orphaned volumes"
 [ ! -s "$LOG" ] && echo "ok   nothing was ever deleted" || { echo "FAIL delete calls:"; cat "$LOG"; rc=1; }

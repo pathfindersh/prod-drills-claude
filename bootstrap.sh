@@ -7,6 +7,8 @@
 # All subcommands are idempotent. `up` = terraform + Argo CD (helm) + root App of Apps;
 # Argo then syncs everything under platform/ from Git. Set GITOPS_REVISION=<branch> to make
 # Argo follow a branch other than main (testing before merge).
+# Exit codes: 0 ok; 1 stopped (STOP: message) or a command failed; 2 usage error;
+# 3 `down` finished but the leftover check is NOT clean.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -374,11 +376,17 @@ cmd_up() {
 # Runs on EXIT of `down` (success OR failure). Removes the kubeconfig entries only when
 # the cluster is really gone; if it still exists (e.g. PVCs stuck) we keep them so you
 # can still kubectl in and debug.
+DOWN_VERDICT=""
+print_verdict() { # <exit code>
+  [ -n "$DOWN_VERDICT" ] || return 0
+  if [ "$1" -eq 0 ]; then info "$DOWN_VERDICT"; else warn "$DOWN_VERDICT"; fi
+}
 cleanup_kubeconfig() {
   local rc=$?
   set +e
   if aws eks describe-cluster --region "$REGION" --name "$CLUSTER_NAME" >/dev/null 2>&1; then
     [ "$rc" -ne 0 ] && warn "cluster $CLUSTER_NAME still exists; keeping kubeconfig entry so you can debug"
+    print_verdict "$rc"
     return "$rc"
   fi
   local c
@@ -388,6 +396,7 @@ cleanup_kubeconfig() {
     kubectl config delete-user "$c" >/dev/null 2>&1
     info "removed kubeconfig entry $c"
   done
+  print_verdict "$rc"
   return "$rc"
 }
 
@@ -428,9 +437,11 @@ aws_check() {
   local thing="$1" err rc=0; shift
   err="$(mktemp)"
   CHECK_OUT="$(aws "$@" 2>"$err")" || rc=$?
+  CHECK_ERR=""
   if [ "$rc" -ne 0 ]; then
     CHECK_OUT=""
-    warn "could not check $thing: $(tr '\n' ' ' <"$err" | sed 's/^ *//; s/ *$//')"
+    CHECK_ERR="$(tr '\n' ' ' <"$err" | sed 's/^ *//; s/ *$//')"
+    warn "could not check $thing: $CHECK_ERR"
   fi
   rm -f "$err"
   [ "$rc" -eq 0 ]
@@ -445,7 +456,7 @@ leftover_probe() { # <thing> <message when something is found> <aws args...>
 }
 
 # Independent of Terraform state: anything billable or left behind? Reports only, deletes nothing.
-# Fails closed: "clean" is printed only if every check ran AND found nothing.
+# Fails closed: "clean" is printed only if every check ran AND found nothing. Returns 1 otherwise.
 leftover_check() {
   local bad=0 sgs=""
   leftover_probe "EKS clusters" "cluster still listed" \
@@ -475,7 +486,34 @@ leftover_check() {
   else
     warn "leftover check NOT clean (see warnings above)"
   fi
-  return 0
+  return "$bad"
+}
+
+# Wait until no load balancer (NLB/ALB or Classic) is left in the VPC. A failed call means "unknown",
+# which counts as "still there": terraform destroy must not start on a guess. Gives up with the AWS
+# error after LB_MAX_FAILS consecutive failed polls, or after LB_WAIT_TRIES polls in total.
+wait_lbs_gone() { # <vpc-id>
+  local vpc="$1" tries="${LB_WAIT_TRIES:-30}" max_fails="${LB_MAX_FAILS:-6}" i fails=0 left err
+  for i in $(seq 1 "$tries"); do
+    left=""; err=""
+    if aws_check "NLB/ALB load balancers" elbv2 describe-load-balancers --region "$REGION" \
+         --query "LoadBalancers[?VpcId=='$vpc'].LoadBalancerArn" --output text
+    then left+="$CHECK_OUT"; else err="$CHECK_ERR"; fi
+    if aws_check "Classic load balancers" elb describe-load-balancers --region "$REGION" \
+         --query "LoadBalancerDescriptions[?VPCId=='$vpc'].LoadBalancerName" --output text
+    then left+=" $CHECK_OUT"; else err="$CHECK_ERR"; fi
+    left="$(xargs <<<"$left")"
+    if [ -n "$err" ]; then
+      fails=$((fails+1))
+      [ "$fails" -lt "$max_fails" ] || die "cannot verify that the load balancers in $vpc are gone ($fails failed checks in a row): $err"
+    else
+      fails=0
+      [ -n "$left" ] || return 0
+    fi
+    [ "$i" -lt "$tries" ] && sleep 10
+  done
+  [ -z "$err" ] || die "cannot verify that the load balancers in $vpc are gone: $err"
+  die "Load balancers still exist in $vpc after $tries checks: $left"
 }
 
 # GONE | ACTIVE/CREATING/DELETING/... | ERROR:<message>. Only ResourceNotFoundException counts as gone;
@@ -590,14 +628,7 @@ cmd_down() {
 
     step_start "wait for load balancers in the VPC to disappear"
     local vpc; vpc="$(aws ec2 describe-vpcs --region "$REGION" --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)"
-    local i left
-    for i in $(seq 1 30); do
-      left="$( { aws elbv2 describe-load-balancers --region "$REGION" --query "LoadBalancers[?VpcId=='$vpc'].LoadBalancerArn" --output text
-                 aws elb describe-load-balancers --region "$REGION" --query "LoadBalancerDescriptions[?VPCId=='$vpc'].LoadBalancerName" --output text; } | tr -d '[:space:]')"
-      [ -z "$left" ] && break
-      sleep 10
-    done
-    [ -z "$left" ] || die "Load balancers still exist in $vpc after 5 min: $left"
+    wait_lbs_gone "$vpc"
     step_done "elb wait"
   else
     info "No cluster $CLUSTER_NAME in $REGION - skipping Kubernetes cleanup"
@@ -629,11 +660,19 @@ cmd_down() {
   step_done "orphan volumes"
 
   step_start "leftover check (independent of terraform state)"
-  leftover_check
+  local dirty=0
+  leftover_check || dirty=1
   step_done "leftover check"
 
   rm -rf "$RUN_DIR"
-  info "down complete in $((SECONDS/60))m$((SECONDS%60))s"   # kubeconfig is cleaned by the EXIT trap
+  # The verdict is printed by the EXIT trap (cleanup_kubeconfig) so it is the LAST line of the output.
+  local took="$((SECONDS/60))m$((SECONDS%60))s"
+  if [ "$dirty" = 0 ]; then
+    DOWN_VERDICT="down complete in $took: leftover check clean"
+  else
+    DOWN_VERDICT="down finished in $took BUT the leftover check is NOT clean - read the warnings above (exit 3)"
+    exit 3
+  fi
 }
 
 # ---------- status ----------

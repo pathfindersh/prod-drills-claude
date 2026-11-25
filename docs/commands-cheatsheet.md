@@ -48,6 +48,19 @@ gh api repos/pathfindersh/prod-drills-claude/branches/main/protection \
 
 `check`, `up --env kodekloud` (10m55s) and `down --env kodekloud` (5m06s) are verified end to end with no manual steps. `status` is not yet verified.
 
+Exit codes of `bootstrap.sh` (check with `echo $?`):
+
+| code | meaning |
+|---|---|
+| 0 | success (`down`: everything checked and nothing left behind) |
+| 1 | stopped with a `STOP:` message, or a command failed (other non-zero codes can come straight from a failed tool) |
+| 2 | usage error (unknown subcommand) |
+| 3 | `down` finished, but the leftover check is NOT clean: something remains, or a check could not run. Read the warnings |
+
+```bash
+scripts/test-down.sh && scripts/test-leftover-check.sh   # offline stub tests for down (no AWS)
+```
+
 ## aws
 
 ```bash
