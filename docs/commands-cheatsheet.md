@@ -125,7 +125,7 @@ GITOPS_REVISION=<branch> ./bootstrap.sh up --env kodekloud            # Argo fol
 ## storage / load balancers (verified in Phase 2)
 
 ```bash
-kubectl get sc                                             # gp3 (default)
+kubectl get sc                                             # default: gp2-csi (kodekloud), gp3 (personal) - gp2-csi not yet run on a cluster
 kubectl get pv -o jsonpath='{.items[0].spec.csi.volumeHandle}'   # EBS volume id
 aws ec2 describe-volumes --volume-ids <vol> --query 'Volumes[0].State' --output text   # InvalidVolume.NotFound after delete
 aws elb describe-load-balancers --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text   # classic ELBs (in-tree provider)
@@ -160,3 +160,11 @@ kubectl get applicationset -n argocd; kubectl get applications -n argocd
 kubectl get pods,pvc -n shop-dev
 kubectl -n shop-dev port-forward svc/frontend 8080:80
 ```
+
+## Offline guards
+```bash
+scripts/check-no-ip.sh      # public repo: no real public IP or non-example /32 (needs network to detect your IP)
+scripts/check-env-disk.sh   # kodekloud: gp2 only, node root volume <= 20GiB
+scripts/test-no-ip.sh       # stub test of the IP guard
+```
+Both checks also run at the start of `scripts/validate-platform.sh`; the IP check also in `validate-charts.sh`.

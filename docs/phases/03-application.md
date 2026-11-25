@@ -2,9 +2,37 @@
 
 > Status: 3a done and verified (dev). 3b (test + prod, LoadBalancer, ownership check) pending. See **RESUME HERE**.
 
-## RESUME HERE (session 4 outcome - read first)
+## RESUME HERE (read first)
 
 State: branch `feat/phase-3-application`, PR #8 DRAFT, not merged. Lab for kodekloud: **prefix delegation OFF (17 pods/node)**; on for personal.
+
+### Session 7: the checker deleted the cluster again (2026-11-26)
+
+**Next step: the gp2 test.** The gp2 change is applied in code (NOT yet run on a cluster): kodekloud has a gp2 20GiB node root volume and default StorageClass `gp2-csi`; personal stays gp3 30GiB. Plan: `up`, check the cluster still exists at 03:15, `down` at 03:20. The unverified items from session 6 (below) are all still open.
+
+**What the gp2 test can and cannot show:** a deletion would rule gp3 out as the only cause. Survival is evidence, not proof: earlier gp3 clusters also survived, the window after `up` is about 20 minutes (this deletion came ~14 min after `CreateCluster`), and disk type and size change together.
+
+PR #8 will be **squash-merged** (an earlier commit on the branch contains an IP address that must not reach `main`'s history).
+
+CloudTrail timeline (IST, checker session `ConfigRuleCheckerSession879972`):
+
+| time | event |
+|---|---|
+| 01:48:18 | our `CreateCluster` |
+| 01:55:56 - 01:59:41 | checker: `ListClusters`, `DescribeCluster`, IAM user listing, `GetCallerIdentity`; one `AssumeRole` of its own got `AccessDenied` |
+| 02:00:31 | `CreateAccessEntry` on `demo-eks` (its own role) |
+| 02:01:11 - 02:01:13 | (ours) EBS CSI driver creates two 1Gi **gp3** volumes for `data-redis-cart-0` in `shop-dev` and `shop-prod` |
+| 02:01:20 | `AssociateAccessPolicy` `AmazonEKSClusterAdminPolicy` |
+| 02:02:56 | `ListNodegroups`, `ListFargateProfiles` |
+| 02:02:57 | `DeleteCluster` |
+
+- **The reason is not visible in CloudTrail.** The events show what the checker called, not what rule failed. It gave itself cluster-admin first, so it may have inspected objects through the Kubernetes API, which CloudTrail does not record (inference).
+- **Wrong hypothesis: load balancers.** We suspected the entrances (NLBs) might be involved. No load balancer existed: no `CreateLoadBalancer` event tonight and `elbv2` was empty. Ruled out for this deletion. (Separate and still true: in session 6 the checker deleted two Classic ELBs.)
+- **Leading suspect (NOT proven): disk type.** KodeKloud's documented EKS rules (quoted by the owner): self-managed nodes only, `t*.nano`-`medium`, disk type **gp2 only**, max 30GB per node. We use gp3 for the node root volume (launch template) and for the default StorageClass.
+- **Evidence against it:** earlier clusters also used gp3 for both and were not deleted (session 4 A/B run, ~70 min; session 6, about 2h). Either enforcement is not consistent or something else differs. One surviving run after switching to gp2 will not prove the cause.
+- **Also unchecked:** if "30GB per node" counts every attached volume, a 30GB root plus a 1Gi PVC is over it.
+- **`down` after the external deletion: VERIFIED.** It skipped the Kubernetes steps, removed `kubernetes_config_map_v1.aws_auth` from state, destroyed 21 resources, **deleted the two orphaned redis volumes** (first real run of that path), reported one leftover security group (`eks-cluster-sg-demo-eks-855462307`, created by EKS, report only) and ended with `WARN: down finished in 3m16s BUT the leftover check is NOT clean - read the warnings above (exit 3)`, exit code 3.
+- **That was the first real run of the fail-closed teardown code, and it earned its keep:** exit 3 caught the EKS cluster security group `sg-01203fdf34762d14e` that survived the deleted cluster (the older check would have printed "clean"), and the orphan-volume step deleted exactly the two cluster-tagged redis volumes. The owner then had the group deleted; re-running only the leftover check returned `leftover check clean (no cluster, instances, unattached volumes, load balancers, security groups)`, return code 0.
 
 **Verified in session 4 (owner ran everything in the lab):**
 1. **Node user_data fix.** First nodes launched but never joined (`user_data` indented 4 spaces). Fixed with `infra/terraform/templates/user_data.tpl` + `scripts/test-user-data.sh` (byte-exact golden files). Applied the new launch template, terminated the 3 broken instances, the replacements joined with **17 pods each**.
@@ -208,6 +236,7 @@ No timeout on the PVC and no manual scale needed: the earlier `pvc-protection` f
 | `up` skipped the Argo install after a failed first install, then `root.yaml` failed (no `Application` kind) | `helm status argocd` succeeds for a release in `STATUS: failed`, so `up` thought Argo was installed; nothing usable had been installed (no CRDs) | `./bootstrap.sh up --env kodekloud` (second run) | `helm uninstall argocd -n argocd` then `./bootstrap.sh up --env kodekloud` (fresh OCI install, 18 apps Synced/Healthy, 6m1s). Code now does this itself: skip only if `deployed`, otherwise warn + uninstall + reinstall (stub-tested) | A release's existence is not its health; check `.info.status` |
 | Both entrance load balancers disappeared minutes after `up` (Services and Gateways still showed the old hostnames, Argo still `Synced Healthy`, 0 load balancers in AWS) | CloudTrail: the playground checker `ConfigRuleCheckerSession540890` deleted both **Classic** ELBs (the in-tree default) at 16:34:58-59. The cluster stayed ACTIVE | `up` with Envoy Gateway's default LoadBalancer Services | In-tree **NLB** (survived ~44 min, see session 6 results) via `service.beta.kubernetes.io/aws-load-balancer-type: nlb` (`serviceAnnotations` in `platform/gateway/values.yaml`), then delete the two Services so they are recreated (the controller does not notice a load balancer deleted behind its back). Result: see the decision section | Kubernetes status is not proof that a cloud resource exists: check the cloud API; playgrounds may delete resource types |
 | Two security groups left behind after a "clean" `down`: `sg-02882ab47e90eea74` (`k8s-elb-a09d0777...`, admin) and `sg-02ca924bb95bdaf34` (`k8s-elb-a7129fa9...`, public), both tagged `kubernetes.io/cluster/demo-eks=owned` | They belonged to the Classic ELBs the checker deleted directly in AWS. Likely (not proven): the in-tree controller only removes an ELB's security group when it deletes that ELB itself. `leftover_check` never looks at security groups (and checks only `elbv2`, not Classic ELBs) | `./bootstrap.sh down --env kodekloud` -> reported clean | Fixed in code (stub-tested, not yet run in a lab): `leftover_check` also reports security groups tagged for the cluster or named `k8s-elb-*` and Classic ELBs (report only, no auto-delete), and any failed describe call is reported as `could not check <thing>` and is never shown as clean; `down` exits 3 when the check is not clean; the load balancer wait treats a failed call as "still there" and stops with the AWS error (before, a failed `elbv2` call plus an empty Classic list read as "gone") (`scripts/test-leftover-check.sh`, `scripts/test-down.sh`). Manual check: `aws ec2 describe-security-groups --region us-east-1 --filters Name=group-name,Values=k8s-*` | A "clean" teardown is only as good as the list of resource types it checks; in a long-lived account these accumulate |
+| Cluster deleted by the playground ~14 min after `CreateCluster` with prefix delegation OFF and no load balancer in the account | **Unknown.** CloudTrail: `ConfigRuleCheckerSession879972` added a cluster-admin access entry, then called `DeleteCluster` ~2.5 min later. Leading suspect, not proven: the documented gp2-only disk rule (we use gp3); earlier gp3 clusters survived | `up --env kodekloud` | `./bootstrap.sh down --env kodekloud` cleaned up (exit 3, one EKS security group left). Under test: gp2 20GiB for kodekloud (not yet run) | A plausible hypothesis is not a cause: check that the suspected resource even existed |
 | Cluster deleted by the playground ~15 min after fresh `up` (kubectl: `no such host`; `aws eks describe-cluster` -> `DELETING`) | CloudTrail shows the playground checker `ConfigRuleCheckerSession840813` calling `DeleteCluster` at 01:05:48 after inspecting instances. **Root cause not proven, but the A/B test (same lab, prefix delegation OFF, alive 70+ min) strongly points at prefix delegation** | `./bootstrap.sh up --env kodekloud` (prefix delegation on) then `kubectl get nodes` | none; lab ended. Next: toggle prefix delegation off for kodekloud and A/B test (RESUME HERE) | Playground rules can delete resources that look non-standard; keep risky features behind a per-env toggle and test one change at a time |
 | `Cannot evict pod ... would violate the pod's disruption budget` (coredns) while draining node 2 | coredns PodDisruptionBudget: only 1 of 2 replicas may be down | `kubectl drain <node> ...` (first attempt) | same command, retried/left running; it succeeded once the first coredns pod was Ready on another node. No `--disable-eviction`. | The PDB is doing its job; wait for it, do not force |
 | (no error) `kubeconform` hung, no output | schema download from GitHub stalled | `helm template ... \| kubeconform -strict -` | `kubeconform -cache <dir>` with `timeout`+retry (built into `scripts/validate-charts.sh`) | CI tools that fetch schemas need a cache and a timeout |
