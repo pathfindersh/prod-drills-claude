@@ -15,6 +15,11 @@ Evidence (owner, CloudTrail; the actor is the playground's checker `ConfigRuleCh
 
 **Hypothesis, UNPROVEN:** a playground compliance rule inspects instances/ENIs, and prefix delegation (ENIs carrying /28 prefixes, visible through `DescribeInstances`) trips it. Why we suspect it: it is the only change vs the earlier sessions, which survived for hours. Other explanations are not excluded (e.g. a rule on node count/credit spec/max pods, or a time-based reset). Do NOT write this up as a known cause until the A/B test below.
 
+Code status (written between sessions, NO AWS, NOT yet tested in a real lab):
+- DONE in code: item 1 (`enable_prefix_delegation` toggle: `variable` in `infra/terraform/variables.tf`, `false` in `envs/kodekloud.tfvars`, `true` in `envs/personal.tfvars.example`; it drives BOTH `maxPods` in `nodes.tf` and `scripts/cni-prefix-delegation.sh`, which sets the CNI to the requested value and is a no-op when it already matches) and item 5 (`down` handles a gone/DELETING cluster, drops `kubernetes_*` from state, deletes only unattached volumes tagged `kubernetes.io/cluster/demo-eks` or `ebs.csi.aws.com/cluster`).
+- Checked locally only: `terraform validate`; NodeConfig renders with and without `maxPods` (verified in an isolated render); `cluster_state` and `delete_orphan_volumes` against a stubbed `aws` (GONE / DELETING / ERROR distinguished; a volume tagged both ways is deleted once).
+- Still to prove in a lab: `up` with the toggle off (items 2-3 below), and `down` after an external deletion.
+
 Plan for the next session:
 1. **Env toggle `enable_prefix_delegation`** (Terraform variable + per-env tfvars): `false` for `kodekloud`, `true` for `personal`. It controls BOTH the `cni_prefix` step (skip the CNI patch) and `maxPods` (17 when off, 110 when on), so the two can never disagree (see the ordering rule in Concepts).
 2. **A/B test:** `up` with the toggle OFF; confirm the cluster survives > 30 min (ideally into the previous failure window and beyond). Only then can the hypothesis be accepted or rejected. If it dies anyway, the cause is something else; pull CloudTrail again before changing anything.

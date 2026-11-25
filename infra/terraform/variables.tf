@@ -56,3 +56,17 @@ variable "use_custom_elb_ebs_policy" {
   description = "Fallback: create the custom eksPolicy (policy.yaml). Off by default; the playground cannot delete it."
   default     = false
 }
+
+variable "enable_prefix_delegation" {
+  type        = bool
+  description = <<-EOT
+    VPC CNI prefix delegation: ~110 pods/node instead of 17 on t3.medium. When true, Terraform patches the
+    CNI (terraform_data.cni_prefix) BEFORE the node ASG exists and nodes advertise maxPods=110. When false,
+    the CNI is left in its default (non-prefix) mode and kubelet keeps its default max pods (17). One switch
+    drives both so the CNI mode and maxPods can never disagree. false for the KodeKloud playground (see
+    docs/phases/03-application.md: a fresh cluster with prefix delegation was deleted by the playground
+    checker; cause unproven), true for a personal account. Changing it on a running cluster requires
+    rolling the nodes.
+  EOT
+  default     = false
+}

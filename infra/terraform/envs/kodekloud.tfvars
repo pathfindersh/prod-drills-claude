@@ -5,3 +5,6 @@
 kubernetes_version = "1.37"
 instance_type      = "t3.medium"
 node_count         = 3
+# Prefix delegation OFF here: the playground deleted a fresh cluster that had it on (cause unproven;
+# A/B test pending, see docs/phases/03-application.md). Pods/node stays 17.
+enable_prefix_delegation = false

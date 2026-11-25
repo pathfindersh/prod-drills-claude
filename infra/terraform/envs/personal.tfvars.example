@@ -4,3 +4,5 @@
 kubernetes_version = "1.37"
 instance_type      = "t3.medium"
 node_count         = 3
+# 110 pods/node via VPC CNI prefix delegation (maxPods follows this switch).
+enable_prefix_delegation = true

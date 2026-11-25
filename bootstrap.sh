@@ -298,7 +298,9 @@ cmd_up() {
   step_done "kubeconfig"
 
   step_start "VPC CNI prefix delegation (idempotent; Terraform already did it before the nodes)"
-  CLUSTER_NAME="$CLUSTER_NAME" REGION="$REGION" "$ROOT/scripts/cni-prefix-delegation.sh"
+  local pd; pd="$(grep -E '^enable_prefix_delegation' "$TFVARS" | grep -Eo 'true|false' || true)"; pd="${pd:-false}"
+  info "enable_prefix_delegation=$pd (from $(basename "$TFVARS"))"
+  CLUSTER_NAME="$CLUSTER_NAME" REGION="$REGION" ENABLE_PREFIX_DELEGATION="$pd" "$ROOT/scripts/cni-prefix-delegation.sh"
   step_done "cni prefix"
 
   step_start "waiting for nodes Ready (timeout 10m)"
@@ -389,6 +391,35 @@ leftover_check() {
   return 0
 }
 
+# GONE | ACTIVE/CREATING/DELETING/... | ERROR:<message>. Only ResourceNotFoundException counts as gone;
+# credential/network errors must not be mistaken for "no cluster".
+cluster_state() {
+  local out
+  if out="$(aws eks describe-cluster --region "$REGION" --name "$CLUSTER_NAME" --query cluster.status --output text 2>&1)"; then
+    echo "$out"
+  elif grep -q ResourceNotFoundException <<<"$out"; then
+    echo GONE
+  else
+    echo "ERROR:$out"
+  fi
+}
+
+# Orphans the EBS CSI driver leaves when the cluster dies before it could clean up. Deletes ONLY
+# unattached ("available") volumes that carry a tag set by the driver for this cluster:
+# kubernetes.io/cluster/<name> or ebs.csi.aws.com/cluster. Untagged volumes are never touched.
+delete_orphan_volumes() {
+  local ids id name f
+  ids="$( { for f in "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" "Name=tag-key,Values=ebs.csi.aws.com/cluster"; do
+              aws ec2 describe-volumes --region "$REGION" --filters Name=status,Values=available "$f" --query 'Volumes[].VolumeId' --output text 2>/dev/null
+            done; } | tr '\t' '\n' | sed '/^$/d' | sort -u)"
+  [ -n "$ids" ] || return 0
+  for id in $ids; do
+    name="$(aws ec2 describe-volumes --region "$REGION" --volume-ids "$id" --query "Volumes[0].Tags[?Key=='kubernetes.io/created-for/pvc/name'].Value | [0]" --output text 2>/dev/null || true)"
+    info "deleting orphaned CSI volume $id (pvc: ${name:-?}) - unattached, tagged for this cluster/CSI"
+    aws ec2 delete-volume --region "$REGION" --volume-id "$id" >/dev/null || warn "could not delete $id"
+  done
+}
+
 cmd_down() {
   parse_env "$@"; resolve_region
   confirm_identity "down"
@@ -396,7 +427,18 @@ cmd_down() {
   SECONDS=0
   session_guard
 
-  if aws eks describe-cluster --region "$REGION" --name "$CLUSTER_NAME" >/dev/null 2>&1; then
+  local cs gone=0; cs="$(cluster_state)"
+  case "$cs" in
+    ERROR:*) die "cannot tell whether cluster $CLUSTER_NAME exists: ${cs#ERROR:}" ;;
+    DELETING) # someone else (e.g. the playground) is deleting it: kubectl is useless, wait for it
+      step_start "cluster is DELETING (not started by us) - waiting up to 15 min"
+      for _ in $(seq 1 90); do cs="$(cluster_state)"; [ "$cs" = DELETING ] || break; sleep 10; done
+      [ "$cs" = GONE ] || die "cluster still $cs after waiting"
+      step_done "cluster gone" ;;
+  esac
+  [ "$cs" = GONE ] && gone=1
+
+  if [ "$gone" = 0 ]; then
     step_start "point kubectl at $CLUSTER_NAME"
     aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER_NAME" >/dev/null
     kube_ctx_ok || die "kubectl context is not $CLUSTER_NAME"
@@ -458,6 +500,16 @@ cmd_down() {
   fi
 
   step_start "terraform init";  tf_init;  step_done "init"
+  if [ "$gone" = 1 ]; then
+    # Resources that live INSIDE the cluster (kubernetes_* provider) cannot be refreshed or destroyed
+    # without it: the provider falls back to localhost:80 and destroy fails. They died with the cluster.
+    local k; k="$(tf state list 2>/dev/null | grep '^kubernetes_' || true)"
+    if [ -n "$k" ]; then
+      step_start "cluster is gone: dropping in-cluster resources from Terraform state"
+      while IFS= read -r a; do tf state rm "$a" >/dev/null && info "state rm $a"; done <<<"$k"
+      step_done "state rm"
+    fi
+  fi
   step_start "terraform destroy"
   local log; log="$(mktemp)"
   # stderr is copied to $log (terraform prints errors there); the confirm prompt stays on the tty
@@ -467,6 +519,10 @@ cmd_down() {
   fi
   rm -f "$log"
   step_done "destroy"
+
+  step_start "orphaned CSI volumes (tagged for this cluster, unattached)"
+  delete_orphan_volumes
+  step_done "orphan volumes"
 
   step_start "leftover check (independent of terraform state)"
   leftover_check
