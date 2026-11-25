@@ -40,7 +40,11 @@ What was written:
 - `scripts/test-env.sh up [--order]|down|status` (ephemeral test); `scripts/validate-platform.sh` (offline checks).
 - Checked offline: `validate-platform.sh`, `validate-charts.sh dev test prod` (36/36 clean), `bash -n`, IP detection with a stubbed `curl`, argo-cd and kube-prometheus-stack renders accept the new keys.
 
-**Next lab, in order (everything below is UNVERIFIED):**
+**Lab session 6 results so far** (started 16:05 IST, account 533267040025):
+- Step 1: `GITOPS_REVISION=feat/phase-3-application ./bootstrap.sh up --env kodekloud` -> 25 apps Synced/Healthy, no unhealthy pods, 17 pods/node, admin allow-list = owner's public IP (confirmed from the browser). argocd-server and Grafana probes pass with sub-paths.
+- Step 2: `kubectl get pods -A --field-selector=status.phase!=Succeeded,status.phase!=Failed --no-headers | wc -l` -> 43; requests CPU 3390m/5790m (58.5%), memory 3940Mi/~9880Mi (40%): matches the plan.
+
+**Next lab, in order (steps not listed above are UNVERIFIED):**
 1. `GITOPS_REVISION=feat/phase-3-application ./bootstrap.sh up --env kodekloud`; all apps Synced+Healthy; note the printed allow-list CIDR.
 2. Capacity: `kubectl get pods -A --no-headers | wc -l` (expect ~43) and `kubectl describe nodes`.
 3. `kubectl get gateway -n envoy-gateway-system` -> two addresses (DNS may take a few minutes).
@@ -55,6 +59,7 @@ What was written:
 - **No node metrics history:** node-exporter is off (3 pod slots). `kubectl top nodes` still works; `personal` keeps node-exporter.
 - **A node drain does not fully fit:** 2 nodes hold 34 pods but about 38 or fewer total are needed; during a node replacement some pods stay Pending until the new node joins.
 - **Test uses the headroom:** no deploys (and no drains) while test runs; the 8-pod order variant leaves 0 free slots.
+- **Memory limits are overcommitted:** up to ~120% of allocatable on one node (measured: limits 3968Mi / 2656Mi / 2708Mi vs ~3293Mi per node; other nodes 81-82%). Requests are only ~40%, so scheduling is fine, but if many pods on one node grow toward their limits at once the node hits memory pressure and the kubelet evicts pods (or the kernel OOM-kills).
 - Single replica everywhere; plain HTTP on both entrances until TLS (Phase 3.5), so admin passwords cross the internet unencrypted: the source-IP allow-list limits who can connect, it does not encrypt.
 
 If a lab shows `DELETING` unexpectedly: `aws eks describe-cluster`, read CloudTrail before re-running `up`; `down` removes orphaned ASG/instances.
