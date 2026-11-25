@@ -3,6 +3,7 @@
 # Usage: scripts/validate-charts.sh [env ...]   (default: dev)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+scripts/check-no-ip.sh
 KC="${KUBECONFORM:-kubeconform}"
 K8S="${K8S_VERSION:-1.34.0}"
 CACHE="${KUBECONFORM_CACHE:-${TMPDIR:-/tmp}/kubeconform-cache}"; mkdir -p "$CACHE"

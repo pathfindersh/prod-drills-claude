@@ -11,6 +11,9 @@ t3.medium or smaller, restricted IAM). Later: personal AWS account.
 - `aws sts get-caller-identity` must show the expected account/region.
 - `kubectl config current-context` must be this lab's cluster. Otherwise STOP.
 - Repo is PUBLIC: never write a token, key, password or kubeconfig into any file.
+- Never write a real public IP into any file or commit message (the admin IP, any
+  real `/32`). Write "the owner's IP"; examples use 192.0.2.0/24, 198.51.100.0/24
+  or 203.0.113.0/24. `scripts/check-no-ip.sh` must pass before every commit.
 - On AccessDenied / explicit deny: STOP, show the exact error, propose options.
   Never try to escalate or work around IAM.
 - Never push to main. Feature branch -> PR -> I merge.

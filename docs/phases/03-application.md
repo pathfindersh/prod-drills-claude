@@ -45,7 +45,7 @@ What was written:
 - Step 2: `kubectl get pods -A --field-selector=status.phase!=Succeeded,status.phase!=Failed --no-headers | wc -l` -> 43; requests CPU 3390m/5790m (58.5%), memory 3940Mi/~9880Mi (40%): matches the plan.
 
 - NLB fix: both load balancers are type `network`, state `active`; created ~17:02 IST and still present at 17:46 (~44 min; the Classic ones were deleted within minutes). So in-tree NLBs survived the checker in this session.
-- Step 4 **PARTIAL** (owner, curl via the NLBs): public `/` -> 200; admin `/argocd/` -> 200 from the allow-listed IP (49.205.33.176). Positive path verified.
+- Step 4 **PARTIAL** (owner, curl via the NLBs): public `/` -> 200; admin `/argocd/` -> 200 from the owner's IP (allow-listed). Positive path verified.
   - **NOT verified:** admin refused from a non-listed source (the deny test); public `/dev/`, `/test/` (503) and the slash redirects; admin `/grafana/`; public NLB returning 404 for admin paths; node security group rules.
 - Steps 5-9 not verified (deny test, ephemeral test up/down, ownership check, `down` with Gateways).
 
