@@ -221,6 +221,27 @@ argo_helm_action() {
   fi
 }
 
+# The admin entrance allow-list: ADMIN_CIDR if set, else this machine's public IP as /32.
+# Prints nothing if it cannot be determined or is not a /16../32 IPv4 CIDR: the admin load balancer is
+# then NOT created (fail closed). Never written to any file in the repo.
+detect_admin_cidr() {
+  local c="${ADMIN_CIDR:-}"
+  if [ -z "$c" ]; then
+    c="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)"
+    [ -n "$c" ] && c="$c/32"
+  fi
+  if grep -Eqx '((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/(1[6-9]|2[0-9]|3[0-2])' <<<"$c"; then
+    echo "$c"
+  fi
+}
+
+# root.yaml with the branch, environment and admin CIDR filled in (the committed file stays generic).
+render_root() { # rev env cidr
+  sed -e "/GITOPS_REV/ s|: main #|: $1 #|" \
+      -e "/LAB_ENV/ s|values-kodekloud\.yaml|values-$2.yaml|" \
+      -e "/ADMIN_CIDR/ s|value: \"\"|value: \"$3\"|" "$ROOT/bootstrap/root.yaml"
+}
+
 argo_install() {
   local ver; ver="$(argocd_chart_version)"; [ -n "$ver" ] || die "cannot read argocd chart version from platform/apps/values.yaml"
   # Once installed, Argo manages its own Helm release from Git, so re-running the install adds
@@ -245,13 +266,13 @@ argo_install() {
   grafana_secret
 
   step_start "apply bootstrap/root.yaml (App of Apps)"
-  local rev="${GITOPS_REVISION:-}"
-  if [ -n "$rev" ]; then
-    warn "Argo will follow branch '$rev' instead of main (GITOPS_REVISION)"
-    sed "/GITOPS_REV/ s|: main #|: $rev #|" "$ROOT/bootstrap/root.yaml" | kubectl apply -f -
-  else
-    kubectl apply -f "$ROOT/bootstrap/root.yaml"
-  fi
+  local rev="${GITOPS_REVISION:-main}" cidr
+  [ "$rev" = main ] || warn "Argo will follow branch '$rev' instead of main (GITOPS_REVISION)"
+  [ -f "$ROOT/platform/apps/values-$ENV_NAME.yaml" ] || die "platform/apps/values-$ENV_NAME.yaml missing"
+  cidr="$(detect_admin_cidr)"
+  if [ -n "$cidr" ]; then info "admin entrance allow-list: $cidr (plus gateway.admin.extraCidrs)"
+  else warn "no valid public IP / ADMIN_CIDR: the admin load balancer will NOT be created (unless extraCidrs is set)"; fi
+  render_root "$rev" "$ENV_NAME" "$cidr" | kubectl apply -f -
   step_done "root app"
 }
 
@@ -273,7 +294,7 @@ argo_wait() { # all apps Synced+Healthy, root operation finished
 
 argo_howto() {
   echo
-  info "Argo CD UI:  kubectl port-forward svc/argocd-server -n argocd 8080:80   ->  http://localhost:8080"
+  info "Argo CD UI:  kubectl port-forward svc/argocd-server -n argocd 8080:80   ->  http://localhost:8080/argocd"
   local pw=""
   [ "$ARGO_INSTALLED_NOW" = 1 ] && pw="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)"
   if [ -n "$pw" ]; then
@@ -281,7 +302,9 @@ argo_howto() {
   else
     echo "    read it again: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
   fi
-  info "Grafana UI:  kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80  ->  http://localhost:3000"
+  info "Grafana UI:  kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80  ->  http://localhost:3000/grafana/"
+  info "Entrances (plain HTTP): public = shop at / /dev/ /test/ ; admin = /argocd/ /grafana/ (allow-listed IPs only)"
+  kubectl get gateway -n envoy-gateway-system 2>/dev/null || true
   if [ -n "$GRAFANA_PW_NEW" ]; then
     echo "    user: admin   password (random, shown once, stored only in Secret monitoring/grafana-admin): $GRAFANA_PW_NEW"
   else
@@ -481,6 +504,19 @@ cmd_down() {
     kubectl -n argocd scale statefulset argocd-application-controller --replicas=0 2>/dev/null \
       && kubectl -n argocd wait --for=delete pod -l app.kubernetes.io/name=argocd-application-controller --timeout=120s 2>/dev/null || true
     step_done "argo stopped"
+
+    # Envoy Gateway would recreate its proxy Services if we deleted only them, so remove the Gateways
+    # first (Argo is stopped, so they stay gone) and let the controller delete its load balancers.
+    step_start "delete Gateways (their controller then removes the load balancer Services)"
+    if kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1; then
+      kubectl delete gateway --all -A --wait=true --timeout=180s || warn "some Gateways did not delete"
+      local g
+      for g in $(seq 1 36); do
+        [ -z "$(kubectl get svc -A -o json | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name')" ] && break
+        sleep 5
+      done
+    fi
+    step_done "gateways"
 
     step_start "delete LoadBalancer Services"
     kubectl get svc -A -o json \

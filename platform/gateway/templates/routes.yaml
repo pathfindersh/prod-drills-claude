@@ -1,0 +1,35 @@
+{{- $cidrs := include "gw.adminCidrs" . | fromJsonArray -}}
+{{- $entries := list (dict "name" "public" "cfg" .Values.public) }}
+{{- if $cidrs }}{{ $entries = append $entries (dict "name" "admin" "cfg" .Values.admin) }}{{ end }}
+{{- range $e := $entries }}
+{{- range $r := $e.cfg.routes }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $r.name }}
+  namespace: {{ $r.namespace }}
+spec:
+  parentRefs:
+    - name: {{ $e.name }}
+      namespace: {{ $.Release.Namespace }}
+  {{- with $e.cfg.hostname }}
+  hostnames: [{{ . | quote }}]
+  {{- end }}
+  rules:
+    {{- if ne $r.path "/" }}
+    - matches:   # "/dev" -> "/dev/" (the apps only serve below the trailing slash)
+        - path: { type: Exact, value: {{ $r.path }} }
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            path: { type: ReplaceFullPath, replaceFullPath: {{ $r.path }}/ }
+            statusCode: 302
+    {{- end }}
+    - matches:
+        - path: { type: PathPrefix, value: {{ $r.path }} }
+      backendRefs:
+        - name: {{ $r.service }}
+          port: {{ $r.port }}
+{{- end }}
+{{- end }}

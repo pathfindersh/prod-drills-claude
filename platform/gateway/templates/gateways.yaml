@@ -1,0 +1,61 @@
+{{- $cidrs := include "gw.adminCidrs" . | fromJsonArray -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gatewayClassName }}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+{{- $entries := list (dict "name" "public" "cfg" .Values.public "cidrs" (list)) }}
+{{- if $cidrs }}
+{{- $entries = append $entries (dict "name" "admin" "cfg" .Values.admin "cidrs" $cidrs) }}
+{{- end }}
+{{- range $e := $entries }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: {{ $e.name }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ $.Values.proxy.replicas }}
+        container:
+          resources: {{ toYaml $.Values.proxy.resources | nindent 12 }}
+      envoyService:
+        type: LoadBalancer
+        {{- if $e.cidrs }}
+        loadBalancerSourceRanges: {{ toYaml $e.cidrs | nindent 10 }}
+        {{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $e.name }}
+spec:
+  gatewayClassName: {{ $.Values.gatewayClassName }}
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: {{ $e.name }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      {{- with $e.cfg.hostname }}
+      hostname: {{ . | quote }}
+      {{- end }}
+      allowedRoutes:   # only the namespaces this entrance serves may attach routes to it
+        namespaces:
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  {{- range $e.cfg.routes }}
+                  - {{ .namespace }}
+                  {{- end }}
+{{- end }}

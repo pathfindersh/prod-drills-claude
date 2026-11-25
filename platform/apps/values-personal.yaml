@@ -1,0 +1,8 @@
+# Personal AWS account: all 12 services in all environments, test always on, node-exporter on
+# (the base kube-prometheus-stack values). Needs prefix delegation (envs/personal.tfvars).
+extraValueFiles: {}
+onlineBoutique:
+  environments:
+    dev: [adservice, cartservice, checkoutservice, currencyservice, emailservice, frontend, loadgenerator, paymentservice, productcatalogservice, recommendationservice, redis-cart, shippingservice]
+    test: [adservice, cartservice, checkoutservice, currencyservice, emailservice, frontend, loadgenerator, paymentservice, productcatalogservice, recommendationservice, redis-cart, shippingservice]
+    prod: [adservice, cartservice, checkoutservice, currencyservice, emailservice, frontend, loadgenerator, paymentservice, productcatalogservice, recommendationservice, redis-cart, shippingservice]

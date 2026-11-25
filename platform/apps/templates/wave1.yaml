@@ -1,3 +1,21 @@
 # ---- Wave 1: monitoring (after storage + Argo are Healthy) ----
 # ServerSideApply: kube-prometheus-stack CRDs are too large for client-side apply annotations.
 {{ include "app.chartApp" (dict "root" . "c" .Values.charts.kubePrometheusStack "name" "kube-prometheus-stack" "ns" "monitoring" "wave" 1 "extraSync" (list "ServerSideApply=true")) }}
+---
+# Envoy Gateway ships as an OCI helm chart: Argo needs the registry declared (public, no credentials).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-envoyproxy-oci
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+stringData:
+  name: envoyproxy
+  url: {{ .Values.charts.envoyGateway.repo }}
+  type: helm
+  enableOCI: "true"
+---
+{{ include "app.chartApp" (dict "root" . "c" .Values.charts.envoyGateway "name" "envoy-gateway" "ns" "envoy-gateway-system" "wave" 1 "extraSync" (list "ServerSideApply=true")) }}

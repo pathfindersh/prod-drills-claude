@@ -16,9 +16,14 @@ spec:
     targetRevision: main # GITOPS_REV
     path: platform/apps
     helm:
+      valueFiles:
+        - values.yaml
+        - values-kodekloud.yaml # LAB_ENV (bootstrap.sh: values-<--env>.yaml)
       parameters:
         - name: revision
           value: main # GITOPS_REV
+        - name: gateway.admin.detectedCidr
+          value: "" # ADMIN_CIDR (bootstrap.sh: your public IP; empty = no admin load balancer)
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

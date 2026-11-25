@@ -1,2 +1,2 @@
-# STUB - deployed in phase 3b.
-replicaCount: 2
+# prod: single replica, no HPA/PDB.
+replicaCount: 1

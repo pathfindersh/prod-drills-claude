@@ -1,0 +1,39 @@
+# Plain HTTP on BOTH entrances until TLS (Phase 3.5). Hostnames, paths and CIDRs are values.
+gatewayClassName: lab-envoy
+
+proxy:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+
+# Shop path -> environment. A non-root path must match that environment's frontend BASE_URL
+# (apps/online-boutique/frontend/values-<env>.yaml); scripts/validate-platform.sh checks it.
+public:
+  hostname: ""     # e.g. shop.example.com once a domain exists
+  routes:
+    - { name: shop-prod, namespace: shop-prod, path: /,     service: frontend,   port: 80 }
+    - { name: shop-dev,  namespace: shop-dev,  path: /dev,  service: frontend,   port: 80 }
+    - { name: shop-test, namespace: shop-test, path: /test, service: test-entry, port: 80 }
+
+# Admin paths must match the sub-path settings in platform/values/argocd.yaml and
+# kube-prometheus-stack.yaml (checked by scripts/validate-platform.sh).
+# FAIL CLOSED: with no CIDR, no admin Gateway (and so no admin load balancer) is created.
+admin:
+  hostname: ""
+  detectedCidr: ""   # set by bootstrap.sh up; never committed
+  extraCidrs: []     # team ranges, /16 or narrower
+  routes:
+    - { name: argocd,  namespace: argocd,     path: /argocd,  service: argocd-server,                 port: 80 }
+    - { name: grafana, namespace: monitoring, path: /grafana, service: kube-prometheus-stack-grafana, port: 80 }
+
+# Permanent Service in front of the ephemeral test frontend: no pods -> no endpoints -> the proxy
+# answers 503 on /test; test frontend pods appear -> it works. (A route to a missing Service gives 500.)
+testEntry:
+  namespace: shop-test
+  name: test-entry
+  appName: frontend
+  port: 80
+  targetPort: 8080
+
+namespaces: [shop-dev, shop-test, shop-prod]

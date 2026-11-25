@@ -1,2 +1,4 @@
-# STUB - deployed in phase 3b.
+# test: single replica, no HPA/PDB.
 replicaCount: 1
+env:
+  FRONTEND_ADDR: frontend:80/test   # the frontend serves under BASE_URL

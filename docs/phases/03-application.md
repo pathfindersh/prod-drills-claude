@@ -16,10 +16,46 @@ State: branch `feat/phase-3-application`, PR #8 DRAFT, not merged. Lab for kodek
 
 History (session 3, prefix ON): the playground checker `ConfigRuleCheckerSession840813` (CloudTrail, 01:05:36-48) described instances/VPCs, modified instance credit spec/attributes on our nodes, listed nodegroups/Fargate profiles, then called `DeleteCluster`; no direct ENI calls. Fresh `up` with prefix delegation itself worked (13m58s, 110 pods/node, 18 apps Healthy).
 
-**Next, in order (at 17 pods/node):**
-1. (Done: normal `down` verified, see item 5 above.) The external-deletion path and the orphan DELETE remain unproven.
-2. **Re-plan test + prod for 17 pods/node.** 3 nodes = 51 slots; platform ~26 + dev 12 = ~38, leaving ~13 for test + prod + Envoy Gateway (controller + 2 proxies ~3-4 pods). Too tight for full environments: test = a small subset (e.g. frontend, productcatalogservice, currencyservice, cartservice, redis-cart, checkoutservice + what it needs), prod 1 replica, loadgenerator off in test/prod, or only one of test/prod at a time. Recompute CPU from live `kubectl describe nodes` (platform ~1.4 of 5.8 CPU). Show the math, wait for go.
-3. Then the list below: test/prod values, Envoy Gateway (public + admin LBs), proofs, ownership, NetworkPolicy.
+**Session 5 (code only, NO lab): test/prod sizing and the entrances are written, NOT yet run on a cluster.**
+
+Sizing (17 pods/node, 51 slots; platform figures from an earlier lab):
+
+| | pods | CPU req | memory req |
+|---|---|---|---|
+| Platform (node-exporter off) | 23 | 1330m | ~2004Mi |
+| Envoy Gateway (controller + 2 proxies) | 3 | 200m | 512Mi |
+| prod: order core + email | 9 | 970m | 712Mi |
+| dev: order core | 8 | 870m | 648Mi |
+| **steady state** | **43/51 (8 free, 15.7%)** | 3370m/5790m (58%) | 3876/9880Mi (39%) |
+| + test (browse + cart, default) | 49/51 | 70% | 44% |
+| + test (order core, short runs) | 51/51 | 73% | 46% |
+
+Not deployed anywhere in the lab: ad, recommendation, loadgenerator (and email outside prod). The frontend/checkout code tolerates their absence (read from `src/`, not tested live). Orders can be placed in prod, dev and `--order` test.
+
+What was written:
+- `platform/apps`: per-env service lists (`onlineBoutique.environments`), `values-kodekloud.yaml` / `values-personal.yaml` (chosen by `--env`), Envoy Gateway 1.10.0 (wave 1), `gateway` app (wave 2).
+- `platform/gateway`: public Gateway (`/`, `/dev`, `/test`) and admin Gateway (`/argocd`, `/grafana`) with `loadBalancerSourceRanges`; hostnames, paths, CIDRs are values; **no CIDR = no admin load balancer**; CIDRs broader than /16 are refused. `/test` points to the permanent `test-entry` Service (no endpoints -> expected 503).
+- Argo CD (`server.rootpath/basehref`) and Grafana (`serve_from_sub_path`) under sub-paths: port-forward URLs are now `localhost:8080/argocd` and `localhost:3000/grafana/`.
+- `bootstrap.sh`: detects your public IP (`ADMIN_CIDR` overrides), never committed; `down` deletes Gateways before the load balancer Services.
+- `scripts/test-env.sh up [--order]|down|status` (ephemeral test); `scripts/validate-platform.sh` (offline checks).
+- Checked offline: `validate-platform.sh`, `validate-charts.sh dev test prod` (36/36 clean), `bash -n`, IP detection with a stubbed `curl`, argo-cd and kube-prometheus-stack renders accept the new keys.
+
+**Next lab, in order (everything below is UNVERIFIED):**
+1. `GITOPS_REVISION=feat/phase-3-application ./bootstrap.sh up --env kodekloud`; all apps Synced+Healthy; note the printed allow-list CIDR.
+2. Capacity: `kubectl get pods -A --no-headers | wc -l` (expect ~43) and `kubectl describe nodes`.
+3. `kubectl get gateway -n envoy-gateway-system` -> two addresses (DNS may take a few minutes).
+4. Public: `curl -sI http://<public>/`, `/dev/`, `/test/` (expect 200, 200, 503); `/dev` and `/test` redirect (302). Order in prod and dev in a browser.
+5. Admin from your IP: `http://<admin>/argocd/`, `/grafana/`. From another source (not on the list, e.g. a phone on mobile data, or a pod in the cluster, whose egress is the node IP) the connection must time out. Show the ELB security group rules too. Check that the public LB returns 404 for `/argocd` and `/grafana`.
+6. `scripts/test-env.sh up`, `/test/` -> 200, `scripts/test-env.sh down`, `/test/` -> 503.
+7. Likely trouble spots: argocd-server probes with rootpath (chart keeps `/healthz`); Grafana probe `/api/health` and its Prometheus target `/metrics` with sub-path; 503 (not 500) for the empty Service; EnvoyProxy source ranges reaching the AWS load balancer.
+8. Ownership check on `shop-*` images; NetworkPolicy enforcement only if time remains.
+9. `down`: watch the new "delete Gateways" step and that no load balancers remain.
+
+### Known lab limitations (kodekloud)
+- **No node metrics history:** node-exporter is off (3 pod slots). `kubectl top nodes` still works; `personal` keeps node-exporter.
+- **A node drain does not fully fit:** 2 nodes hold 34 pods but about 38 or fewer total are needed; during a node replacement some pods stay Pending until the new node joins.
+- **Test uses the headroom:** no deploys (and no drains) while test runs; the 8-pod order variant leaves 0 free slots.
+- Single replica everywhere; plain HTTP on both entrances until TLS (Phase 3.5), so admin passwords cross the internet unencrypted: the source-IP allow-list limits who can connect, it does not encrypt.
 
 If a lab shows `DELETING` unexpectedly: `aws eks describe-cluster`, read CloudTrail before re-running `up`; `down` removes orphaned ASG/instances.
 

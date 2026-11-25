@@ -1,2 +1,4 @@
 # dev: single replica, no HPA/PDB.
 replicaCount: 1
+env:
+  FRONTEND_ADDR: frontend:80/dev   # the frontend serves under BASE_URL

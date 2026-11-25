@@ -1,0 +1,22 @@
+{{- range .Values.namespaces }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ . }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false   # never delete a shop namespace from here
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.testEntry.name }}
+  namespace: {{ .Values.testEntry.namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Values.testEntry.appName }}
+  ports:
+    - name: http
+      port: {{ .Values.testEntry.port }}
+      targetPort: {{ .Values.testEntry.targetPort }}

@@ -1,0 +1,3 @@
+# KodeKloud only (see platform/apps/values-kodekloud.yaml).
+nodeExporter:
+  enabled: false

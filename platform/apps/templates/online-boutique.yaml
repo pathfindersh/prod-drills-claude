@@ -1,10 +1,11 @@
-{{- /* ApplicationSet: one Application per service x environment.
+{{- /* ApplicationSet: one Application per (environment, service) in onlineBoutique.environments.
        Sources: (1) charts/microservice from this repo, (2) this repo as $values for the values files.
-       Argo renders with `helm template` (no Helm release exists in the cluster). */ -}}
+       Argo renders with `helm template` (no Helm release exists in the cluster).
+       scripts/test-env.sh renders this same file for the ephemeral test environment. */ -}}
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: online-boutique
+  name: {{ .Values.onlineBoutique.name }}
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "2"
@@ -12,24 +13,21 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - matrix:
-        generators:
-          - list:
-              elements:
-                {{- range .Values.onlineBoutique.services }}
-                - service: {{ . }}
-                {{- end }}
-          - list:
-              elements:
-                {{- range .Values.onlineBoutique.environments }}
-                - env: {{ . }}
-                {{- end }}
+    - list:
+        elements:
+          {{- range $env, $services := .Values.onlineBoutique.environments }}
+          {{- range $services }}
+          - { env: {{ $env }}, service: {{ . }} }
+          {{- end }}
+          {{- end }}
   template:
     metadata:
       name: {{`'{{ .service }}-{{ .env }}'`}}
       labels:
         app.kubernetes.io/part-of: online-boutique
         environment: {{`'{{ .env }}'`}}
+      finalizers:   # removing an element (or the set) also removes its resources
+        - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
       sources:
@@ -46,7 +44,7 @@ spec:
           ref: values
       destination:
         server: https://kubernetes.default.svc
-        namespace: {{`shop-{{ .env }}`}}
+        namespace: {{`'shop-{{ .env }}'`}}
       syncPolicy:
         automated:
           prune: true

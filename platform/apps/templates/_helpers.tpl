@@ -19,6 +19,9 @@ spec:
         releaseName: {{ .release | default .name }}
         valueFiles:
           - $values/platform/values/{{ .name }}.yaml
+          {{- range index $root.Values.extraValueFiles .name }}
+          - $values/{{ . }}
+          {{- end }}
     - repoURL: {{ $root.Values.repoURL }}
       targetRevision: {{ $root.Values.revision }}
       ref: values

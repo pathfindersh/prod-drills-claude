@@ -1,0 +1,4 @@
+apiVersion: v2
+name: lab-gateway
+description: Public and admin entrances (Gateway API on Envoy Gateway)
+version: 0.1.0

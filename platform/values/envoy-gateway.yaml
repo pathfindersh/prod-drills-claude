@@ -1,0 +1,7 @@
+# Envoy Gateway controller (the data-plane proxies are sized in platform/gateway/values.yaml).
+deployment:
+  replicas: 1
+  envoyGateway:
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 512Mi }

@@ -1,2 +1,8 @@
-# STUB - deployed in phase 3b.
+# test: single replica, no HPA/PDB.
 replicaCount: 1
+env:
+  BASE_URL: /test   # must match the public route path in platform/gateway/values.yaml
+readinessProbe:
+  path: /test/_healthz
+livenessProbe:
+  path: /test/_healthz

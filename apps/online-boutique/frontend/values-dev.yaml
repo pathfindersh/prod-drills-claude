@@ -1,2 +1,8 @@
 # dev: single replica, no HPA/PDB.
 replicaCount: 1
+env:
+  BASE_URL: /dev   # must match the public route path in platform/gateway/values.yaml
+readinessProbe:
+  path: /dev/_healthz
+livenessProbe:
+  path: /dev/_healthz

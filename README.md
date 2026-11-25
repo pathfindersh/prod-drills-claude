@@ -89,6 +89,13 @@ deployed per environment by an Argo ApplicationSet using the shared chart `chart
 Dev: `kubectl -n shop-dev port-forward svc/frontend 8080:80`. Validate charts: `scripts/validate-charts.sh dev`
 (needs `kubeconform`). Details and resume notes: `docs/phases/03-application.md`.
 
+## Entrances and environments (Phase 3b, not yet verified on a cluster)
+
+Public load balancer: shop at `/` (prod), `/dev/`, `/test/`. Admin load balancer: `/argocd/`, `/grafana/`, open only to
+your public IP (detected by `up`; override with `ADMIN_CIDR`, add team ranges in `gateway.admin.extraCidrs`).
+Plain HTTP until TLS. Test is ephemeral: `scripts/test-env.sh up|down`. Offline checks:
+`scripts/validate-platform.sh`, `scripts/validate-charts.sh dev test prod`.
+
 ## Storage
 
 Phase 1 leaves the cluster **without a storage driver** (PVCs stay `Pending`). The EKS

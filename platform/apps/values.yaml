@@ -3,26 +3,35 @@ revision: main   # overridden by the root Application (helm parameter)
 
 # Pinned upstream chart versions (see docs/third-party.md)
 charts:
+  envoyGateway: { repo: docker.io/envoyproxy, chart: gateway-helm, version: 1.10.0 }
   argocd:     { repo: https://argoproj.github.io/argo-helm,                      chart: argo-cd,                 version: 10.18.2 }
   ebsCsi:     { repo: https://kubernetes-sigs.github.io/aws-ebs-csi-driver,      chart: aws-ebs-csi-driver,      version: 2.68.1 }
   metricsServer: { repo: https://kubernetes-sigs.github.io/metrics-server/,  chart: metrics-server,         version: 3.14.0 }
   kubePrometheusStack: { repo: https://prometheus-community.github.io/helm-charts, chart: kube-prometheus-stack, version: 93.6.1 }
 
-# Online Boutique (service x environment ApplicationSet). Chart: charts/microservice,
-# values: apps/online-boutique/<service>/values{,-<env>}.yaml. Phase 3a enables dev only;
-# add test/prod to `environments` in phase 3b.
+
+# Per-environment overrides live in values-<env>.yaml next to this file (root.yaml / bootstrap.sh
+# pick one by --env). Extra value files for a chart Application, keyed by Application name.
+extraValueFiles: {}
+
+# Overrides for platform/gateway (hostnames, paths, CIDRs are VALUES: add a domain/TLS/SSO later
+# without touching templates). detectedCidr is set by `bootstrap.sh up` as a root parameter and is
+# never committed. Add team ranges to extraCidrs. No CIDR at all = no admin load balancer.
+gateway:
+  admin:
+    detectedCidr: ""
+    extraCidrs: []
+
+# Online Boutique: one Argo Application per (environment, service) listed here.
+# Chart: charts/microservice, values: apps/online-boutique/<service>/values{,-<env>}.yaml.
+# These lists are the KodeKloud lab sizing (17 pods/node, see docs/phases/03-application.md);
+# values-personal.yaml runs everything.
 onlineBoutique:
-  environments: [dev]
-  services:
-    - adservice
-    - cartservice
-    - checkoutservice
-    - currencyservice
-    - emailservice
-    - frontend
-    - loadgenerator
-    - paymentservice
-    - productcatalogservice
-    - recommendationservice
-    - redis-cart
-    - shippingservice
+  name: online-boutique
+  environments:
+    dev: [frontend, productcatalogservice, currencyservice, cartservice, redis-cart, shippingservice, checkoutservice, paymentservice]
+    prod: [frontend, productcatalogservice, currencyservice, cartservice, redis-cart, shippingservice, checkoutservice, paymentservice, emailservice]
+    test: []   # ephemeral: scripts/test-env.sh up|down
+  testRun:     # service sets used by scripts/test-env.sh
+    browse: [frontend, productcatalogservice, currencyservice, cartservice, redis-cart, shippingservice]
+    order: [frontend, productcatalogservice, currencyservice, cartservice, redis-cart, shippingservice, checkoutservice, paymentservice]
